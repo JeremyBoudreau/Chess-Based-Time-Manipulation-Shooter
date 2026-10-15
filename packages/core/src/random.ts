@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noBitwiseOperators: 32-bit integer math is the point of a PRNG
 /** Small, fast seeded PRNG (mulberry32). Returns floats in [0, 1). */
 export const mulberry32 = (seed: number): (() => number) => {
   let state = seed >>> 0;

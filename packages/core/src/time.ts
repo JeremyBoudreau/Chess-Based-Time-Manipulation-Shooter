@@ -1,3 +1,4 @@
+import { clamp } from "./geometry";
 import type { TimePolicyData } from "./types";
 
 /** Raw player-activity signals sampled each frame. */
@@ -11,13 +12,28 @@ export interface TimeSignals {
   readonly shotBurst: boolean;
 }
 
+/** Looking around speeds time up, but never all the way: aiming alone must stay a "free" action. */
+const lookScale = (policy: TimePolicyData, lookSpeed: number): number => {
+  if (policy.lookFullSpeed <= 0) {
+    return lookSpeed > 0 ? policy.lookMaxScale : 0;
+  }
+  return Math.min(policy.lookMaxScale, lookSpeed / policy.lookFullSpeed);
+};
+
 /**
  * The SUPERHOT rule: time flows at the speed of the player's most "active" signal.
  * Returns the *target* scale in [idleScale, 1]; the simulation smooths towards it.
  */
 export const targetTimeScale = (
-  _policy: TimePolicyData,
-  _signals: TimeSignals
+  policy: TimePolicyData,
+  signals: TimeSignals
 ): number => {
-  throw new Error("not implemented");
+  const target = Math.max(
+    policy.idleScale,
+    clamp(signals.moveFraction, 0, 1),
+    lookScale(policy, signals.lookSpeed),
+    signals.reloading ? 1 : 0,
+    signals.shotBurst ? 1 : 0
+  );
+  return clamp(target, policy.idleScale, 1);
 };

@@ -1,3 +1,4 @@
+// biome-ignore-all lint/performance/noBarrelFile: this is the package entry point
 export * from "./brain";
 export * from "./config";
 export * from "./geometry";
