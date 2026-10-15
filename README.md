@@ -100,7 +100,12 @@ Live at **https://buckshot-gambit.vercel.app**. SQLite runs through libSQL: the 
    openssl rand -base64 32 | bunx vercel env add BETTER_AUTH_SECRET production --sensitive
    ```
    The public URL needs no variable. Better Auth falls back to Vercel's `VERCEL_PROJECT_PRODUCTION_URL` and trusts preview URLs automatically; set `BETTER_AUTH_URL` only for a custom domain.
-5. Deploy from the repo root. `.vercelignore` keeps local `.env` files, `*.db` and private notes out of the upload:
+5. Connect the GitHub repo. The Vercel GitHub App must be installed on the repo owner's account with access to this repository:
+   ```bash
+   bunx vercel git connect
+   ```
+   From then on, **every push to `main` deploys to production** and other branches get preview deployments.
+6. To deploy without pushing, use the CLI from the repo root. `.vercelignore` keeps local `.env` files, `*.db` and private notes out of the upload:
    ```bash
    bunx vercel deploy --prod
    ```
