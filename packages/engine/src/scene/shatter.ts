@@ -1,4 +1,4 @@
-import { BOARD_SIZE, type PieceKind, type Square } from "@buckshot/core";
+import type { PieceKind } from "@buckshot/core";
 import {
   Color,
   DodecahedronGeometry,
@@ -16,7 +16,7 @@ import {
 } from "three";
 import { PIECE_HEIGHTS } from "../models/pieces";
 import { VOID_FLOOR_Y } from "./board";
-import { HALF_BOARD, squareToWorld } from "./coords";
+import { HALF_BOARD } from "./coords";
 import { PALETTE } from "./palette";
 
 const GRAVITY = 9.8;
@@ -244,29 +244,34 @@ export class ShatterLayer {
     color: "#FFFFFF",
     toneMapped: false,
   });
-  private readonly origin = new Vector3();
 
   constructor() {
     this.group.name = "shatter";
   }
 
-  burst(square: Square, kind: PieceKind, big: boolean): void {
-    const onBoard =
-      square.file >= 0 &&
-      square.file < BOARD_SIZE &&
-      square.rank >= 0 &&
-      square.rank < BOARD_SIZE;
-    if (!onBoard) {
-      return;
-    }
-    squareToWorld(this.origin, square);
-    const burst = new Burst(this.origin, kind, big, {
+  /**
+   * Shatter a piece at `origin`, the world position of its base as drawn rather than its logical
+   * square: a piece killed mid-move must burst where the player saw it, not where it was headed.
+   */
+  burst(origin: Vector3, kind: PieceKind, big: boolean): void {
+    const burst = new Burst(origin, kind, big, {
       chunk: this.chunkGeometry,
       spark: this.sparkGeometry,
       sparkMaterial: this.sparkMaterial,
     });
     this.bursts.push(burst);
     this.group.add(burst.group);
+  }
+
+  /**
+   * A throwaway one-spark mesh for shader warm-up. The sparks are the only mesh drawn with
+   * per-instance colour, so their program would otherwise compile (and hitch) on the first kill.
+   * The caller compiles and then disposes it; geometry and material stay owned by this layer.
+   */
+  warmUpObject(): InstancedMesh {
+    const mesh = new InstancedMesh(this.sparkGeometry, this.sparkMaterial, 1);
+    mesh.setColorAt(0, new Color(PALETTE.red));
+    return mesh;
   }
 
   update(gameDt: number): void {

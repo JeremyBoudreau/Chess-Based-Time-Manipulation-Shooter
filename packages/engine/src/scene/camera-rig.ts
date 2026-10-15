@@ -46,6 +46,9 @@ export class CameraRig {
   private readonly roll = new Quaternion();
   private readonly startPos = new Vector3();
   private readonly endPos = new Vector3();
+  /** Direction the dying king topples, fixed on the first death frame (see `updateDeath`). */
+  private readonly fallDir = new Vector3();
+  private hasFallDir: boolean;
   private shakeAge = Number.POSITIVE_INFINITY;
   private bobPhase = 0;
   private speed = 0;
@@ -54,6 +57,7 @@ export class CameraRig {
 
   constructor() {
     this.camera.rotation.order = "YXZ";
+    this.hasFallDir = false;
   }
 
   setAspect(aspect: number): void {
@@ -67,7 +71,8 @@ export class CameraRig {
     this.speed = 0;
     this.endAge = 0;
     this.ending = "none";
-    this.placeFirstPerson(world, 0, 0);
+    this.hasFallDir = false;
+    this.placeFirstPerson(world, 0, 0, false);
   }
 
   onShot(): void {
@@ -75,24 +80,27 @@ export class CameraRig {
   }
 
   /**
-   * `focus` is the attacker on a loss or the white king's last square on a win; null falls back to
-   * a plain fall / no push-in.
+   * `focus` is the attacker on a loss or where the white king fell on a win; null falls back to a
+   * plain fall / no push-in. `walking` is false on frames the world did not step (paused), whose
+   * stale `player.velocity` must not keep the head bobbing.
    */
   update(
     world: WorldState,
     realDt: number,
     clock: number,
-    focus: DeathFocus | null
+    focus: DeathFocus | null,
+    walking: boolean
   ): void {
     this.shakeAge += realDt;
     if (world.status === "playing") {
       this.ending = "none";
-      this.placeFirstPerson(world, realDt, clock);
+      this.placeFirstPerson(world, realDt, clock, walking);
       return;
     }
     if (this.ending === "none") {
       this.ending = world.status;
       this.endAge = 0;
+      this.hasFallDir = false;
       this.startPos.copy(this.camera.position);
       this.startQuat.copy(this.camera.quaternion);
     }
@@ -107,16 +115,19 @@ export class CameraRig {
   private placeFirstPerson(
     world: WorldState,
     realDt: number,
-    clock: number
+    clock: number,
+    walking: boolean
   ): void {
     const { player } = world;
+    // Zero when the world did not step, so the damp below eases the bob out instead of looping it.
+    const velocity = walking
+      ? Math.hypot(player.velocity.x, player.velocity.y)
+      : 0;
     const speed = clamp01(
-      Math.hypot(player.velocity.x, player.velocity.y) /
-        Math.max(1e-3, world.config.player.moveSpeed)
+      velocity / Math.max(1e-3, world.config.player.moveSpeed)
     );
     this.speed = damp(this.speed, speed, 8, realDt);
-    this.bobPhase +=
-      realDt * Math.hypot(player.velocity.x, player.velocity.y) * 4.4;
+    this.bobPhase += realDt * velocity * 4.4;
     const s = this.speed;
     const bobY = 0.032 * s * Math.sin(this.bobPhase * 2);
     const bobSide = 0.018 * s * Math.sin(this.bobPhase);
@@ -150,17 +161,24 @@ export class CameraRig {
     const { player } = world;
     boardToWorld(this.endPos, player.pos.x, player.pos.y, DEATH_EYE);
     if (focus) {
-      this.offset.set(
-        this.endPos.x - focus.base.x,
-        0,
-        this.endPos.z - focus.base.z
-      );
-      if (this.offset.lengthSq() < 1e-6) {
-        // Attacker already on our square: fall back opposite to where we were facing.
-        this.offset.set(Math.sin(player.yaw), 0, Math.cos(player.yaw));
+      if (!this.hasFallDir) {
+        // Fix the direction once, away from where the blow came from: on the first death frame the
+        // attacker still stands on its starting square. Recomputing it every frame would swing it
+        // (up to 180°) as the lunge carries the attacker through us to the centre of our square.
+        this.fallDir.set(
+          this.endPos.x - focus.base.x,
+          0,
+          this.endPos.z - focus.base.z
+        );
+        if (this.fallDir.lengthSq() < 1e-6) {
+          // Attacker already on our spot: fall back opposite to where we were facing.
+          this.fallDir.set(Math.sin(player.yaw), 0, Math.cos(player.yaw));
+        }
+        this.fallDir.normalize();
+        this.hasFallDir = true;
       }
-      this.offset.normalize().multiplyScalar(DEATH_FALL_BACK);
-      this.endPos.add(this.offset);
+      this.endPos.addScaledVector(this.fallDir, DEATH_FALL_BACK);
+      // Only the gaze follows the lunge.
       this.target.copy(focus.base);
       this.target.y += focus.height * 0.75;
     } else {

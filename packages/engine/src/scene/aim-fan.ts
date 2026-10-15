@@ -12,8 +12,11 @@ import {
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { boardToWorld, HALF_BOARD } from "./coords";
 import { PALETTE } from "./palette";
+import { SPAWN_AHEAD } from "./pellets";
 
 const FAN_Y = 0.007;
+/** Mirrors core shotgun.ts MAX_SPREAD_OVERSHOOT: the clamp on how far jitter may carry a pellet. */
+const MAX_SPREAD_OVERSHOOT = 1.15;
 /** The fan starts a little in front of the player so it never sits under the camera. */
 const INNER_RADIUS = 0.35;
 const LINE_WIDTH = 0.022;
@@ -57,6 +60,20 @@ const ray = (angle: number, from: number, to: number, width: number) => {
   strip.translate(0, 0, -(from + to) / 2);
   strip.rotateY(angle);
   return strip;
+};
+
+/**
+ * Widest angle (radians, either side of aim) a pellet can actually fly at, per core `pelletAngles`:
+ * the edge bin's centre plus its full jitter, capped by the overshoot clamp. Drawing only
+ * ±spreadDegrees would hide the band past the edge where edge pellets often land.
+ */
+const reachHalfAngle = (stats: ShotgunStats): number => {
+  const spread = (stats.spreadDegrees * Math.PI) / 180;
+  const bin = (2 * spread) / Math.max(1, Math.floor(stats.pellets));
+  return Math.min(
+    spread * MAX_SPREAD_OVERSHOOT,
+    spread + 0.5 * bin * stats.spreadJitter
+  );
 };
 
 const merge = (parts: BufferGeometry[]) => {
@@ -130,12 +147,19 @@ export class AimFan {
     this.rebuildIfNeeded(world.config.shotgun);
     const { player } = world;
     this.group.visible = world.status === "playing" && player.alive;
-    boardToWorld(this.group.position, player.pos.x, player.pos.y, FAN_Y);
+    // Apex at the muzzle: pellets spawn SPAWN_AHEAD along forward(yaw) = (-sin, cos) and fly
+    // `pelletRange` from there, so a fan centred on the player would fall short of their reach.
+    boardToWorld(
+      this.group.position,
+      player.pos.x - Math.sin(player.yaw) * SPAWN_AHEAD,
+      player.pos.y + Math.cos(player.yaw) * SPAWN_AHEAD,
+      FAN_Y
+    );
     this.group.rotation.set(0, player.yaw, 0);
   }
 
   private rebuildIfNeeded(stats: ShotgunStats): void {
-    const halfAngle = (stats.spreadDegrees * Math.PI) / 180;
+    const halfAngle = reachHalfAngle(stats);
     if (stats.pelletRange === this.range && halfAngle === this.halfAngle) {
       return;
     }

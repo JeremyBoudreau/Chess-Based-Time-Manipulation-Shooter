@@ -21,8 +21,11 @@ const TRAIL_MAX_LENGTH = 1.2;
  * descent would make pellets dive off-screen before reappearing in the distance.
  */
 const DESCENT_DISTANCE = 1.4;
-/** The sim spawns pellets this far ahead of the player (simulation.ts MUZZLE_OFFSET). */
-const SPAWN_AHEAD = 0.25;
+/**
+ * The sim spawns pellets this far ahead of the player (simulation.ts MUZZLE_OFFSET). Shared with
+ * the aim fan, which must start where the pellets do.
+ */
+export const SPAWN_AHEAD = 0.25;
 /** Steepest / highest the muzzle line may point, so extreme pitch never launches pellets oddly. */
 const MIN_RAY_PITCH = -1.1;
 const MAX_RAY_PITCH = 0.35;

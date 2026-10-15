@@ -1,4 +1,4 @@
-import type { GameEvent, PieceKind, Square, WorldState } from "@buckshot/core";
+import type { GameEvent, PieceState, WorldState } from "@buckshot/core";
 import {
   ACESFilmicToneMapping,
   MathUtils,
@@ -15,6 +15,7 @@ import { Board } from "./scene/board";
 import { CameraRig, type DeathFocus } from "./scene/camera-rig";
 import { boardToWorld, squareToWorld } from "./scene/coords";
 import { Environment } from "./scene/environment";
+import { MoveTargetLayer } from "./scene/move-targets";
 import { PALETTE } from "./scene/palette";
 import { type MuzzleRay, PelletLayer } from "./scene/pellets";
 import { PieceLayer } from "./scene/piece-layer";
@@ -55,19 +56,23 @@ export class GameRenderer {
   private readonly pellets = new PelletLayer();
   private readonly shatter = new ShatterLayer();
   private readonly threats = new ThreatLayer();
+  private readonly moveTargets = new MoveTargetLayer();
   private readonly aimFan = new AimFan();
   private readonly cameraRig = new CameraRig();
   private readonly viewmodel = new Viewmodel();
   private readonly muzzleLight = new PointLight(PALETTE.muzzle, 0, 7, 2);
   private readonly playerWorld = new Vector3();
   private readonly focusBase = new Vector3();
+  private readonly burstOrigin = new Vector3();
+  /** Where the white king's model stood when it shattered (the victory push-in target). */
+  private readonly kingBase = new Vector3();
   private readonly forward = new Vector3();
   private readonly ndc = new Vector3();
   private clock = 0;
   private lastGameTime = 0;
   private lastRealTime = Number.NaN;
   private attackerId: string | null = null;
-  private kingSquare: Square | null = null;
+  private kingFell = false;
 
   constructor({ canvas }: RendererOptions) {
     this.renderer = new WebGLRenderer({
@@ -88,6 +93,7 @@ export class GameRenderer {
     this.environment = new Environment(this.scene);
     this.scene.add(
       this.board.group,
+      this.moveTargets.group,
       this.threats.group,
       this.aimFan.group,
       this.pieces.group,
@@ -98,6 +104,7 @@ export class GameRenderer {
     );
     const { width, height } = canvas;
     this.resize(Math.max(1, width), Math.max(1, height), 1);
+    this.warmUpShaders();
   }
 
   /** Rebuild visuals for a new world (call after creating or restarting a game). */
@@ -106,7 +113,7 @@ export class GameRenderer {
     this.pellets.clear();
     this.shatter.clear();
     this.attackerId = null;
-    this.kingSquare = null;
+    this.kingFell = false;
     this.lastGameTime = world.gameTime;
     this.lastRealTime = world.realTime;
     this.cameraRig.reset(world);
@@ -125,12 +132,17 @@ export class GameRenderer {
     this.clock += dt;
 
     // Events belong to the most recent step; only read them once per step.
-    if (world.realTime !== this.lastRealTime) {
+    const stepped = world.realTime !== this.lastRealTime;
+    if (stepped) {
       this.lastRealTime = world.realTime;
       for (const event of world.events) {
         this.handleEvent(world, event);
       }
     }
+    // `player.velocity` is only fresh on frames the sim stepped while playing. Paused frames skip
+    // the step and game-over steps never touch it, so bobbing on it would walk the camera and gun
+    // forever under the pause and results overlays.
+    const walking = stepped && world.status === "playing";
 
     const { player } = world;
     boardToWorld(this.playerWorld, player.pos.x, player.pos.y, 0);
@@ -141,16 +153,17 @@ export class GameRenderer {
       realDt: dt,
     };
     for (const piece of this.pieces.sync(world, frame)) {
-      this.burst(piece.square, piece.kind);
+      this.burst(piece);
     }
     this.pellets.sync(world, effectDt, this.muzzleRay());
     this.shatter.update(
       world.status === "playing" ? gameDt : dt * AFTERMATH_RATE
     );
+    this.moveTargets.update(world, this.clock);
     this.threats.update(world, this.clock);
     this.aimFan.update(world);
-    this.cameraRig.update(world, dt, this.clock, this.focus(world));
-    this.viewmodel.update(world, dt, effectDt, this.clock);
+    this.cameraRig.update(world, dt, this.clock, this.focus(world), walking);
+    this.viewmodel.update(world, dt, effectDt, this.clock, walking);
     this.updateMuzzleLight();
 
     this.renderer.clear();
@@ -173,6 +186,7 @@ export class GameRenderer {
     this.pellets.dispose();
     this.shatter.dispose();
     this.threats.dispose();
+    this.moveTargets.dispose();
     this.aimFan.dispose();
     this.board.dispose();
     this.viewmodel.dispose();
@@ -206,12 +220,39 @@ export class GameRenderer {
     }
   }
 
-  private burst(square: Square, kind: PieceKind): void {
-    const big = kind === "king";
+  /**
+   * Shatter a piece where its model is drawn. The sim already moved `piece.square` to the
+   * destination when the move started, so a piece killed mid-slide (frozen halfway while the
+   * player aims) would otherwise vanish in one place and burst in another.
+   */
+  private burst(piece: PieceState): void {
+    const origin =
+      this.pieces.positionOf(piece.id, this.burstOrigin) ??
+      squareToWorld(this.burstOrigin, piece.square);
+    // Drop any hop height: debris spawns from the base.
+    origin.y = 0;
+    const big = piece.kind === "king";
     if (big) {
-      this.kingSquare = square;
+      this.kingBase.copy(origin);
+      this.kingFell = true;
     }
-    this.shatter.burst(square, kind, big);
+    this.shatter.burst(origin, piece.kind, big);
+  }
+
+  /**
+   * Build every shader program up front. three.js compiles a program the first time it draws a new
+   * material / light / fog / instancing combination, and three of those only appear mid-game: the
+   * muzzle flash (first shot), the shells (first reload) and the per-instance-colour sparks (first
+   * kill), each a visible hitch. `compile` walks hidden objects too, so the viewmodel's hidden flash
+   * and shells are covered as they sit; the sparks get a throwaway mesh compiled against the main
+   * scene's lights and fog, since those are part of the program key.
+   */
+  private warmUpShaders(): void {
+    this.renderer.compile(this.scene, this.cameraRig.camera);
+    this.renderer.compile(this.viewmodel.scene, this.viewmodel.camera);
+    const sparks = this.shatter.warmUpObject();
+    this.renderer.compile(sparks, this.cameraRig.camera, this.scene);
+    sparks.dispose();
   }
 
   /** What the end-of-game camera looks at: the attacker on a loss, the fallen king on a win. */
@@ -222,11 +263,8 @@ export class GameRenderer {
         ? { base, height: this.pieces.heightOf(this.attackerId) }
         : null;
     }
-    if (world.status === "won" && this.kingSquare !== null) {
-      return {
-        base: squareToWorld(this.focusBase, this.kingSquare),
-        height: 1,
-      };
+    if (world.status === "won" && this.kingFell) {
+      return { base: this.focusBase.copy(this.kingBase), height: 1 };
     }
     return null;
   }

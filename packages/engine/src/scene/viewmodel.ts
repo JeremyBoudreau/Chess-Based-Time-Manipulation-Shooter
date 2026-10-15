@@ -157,6 +157,9 @@ export class Viewmodel {
     this.flash = new Sprite(this.flashMaterial);
     this.flash.visible = false;
     this.flash.renderOrder = 5;
+    // In the graph (hidden) from the start so the renderer's shader warm-up compiles its program;
+    // otherwise the first shot would. `onShot` re-parents it to whichever barrel fires.
+    this.parts.muzzles[1].add(this.flash);
   }
 
   /** Light intensity (0..1) of the muzzle pop, mirrored by the main scene's light. */
@@ -218,17 +221,22 @@ export class Viewmodel {
     this.closeAge = 0;
   }
 
+  /**
+   * `walking` is false on frames the world did not step while playing (paused, game over): their
+   * `player.velocity` is stale and must not keep the gun bobbing.
+   */
   update(
     world: WorldState,
     realDt: number,
     effectDt: number,
-    clock: number
+    clock: number,
+    walking: boolean
   ): void {
     this.shotAge += realDt;
     this.dryAge += realDt;
     this.closeAge += realDt;
     this.flashAge += effectDt;
-    this.updateSway(world, realDt, clock);
+    this.updateSway(world, realDt, clock, walking);
     this.updateRecoil();
     this.updateReload(world.player.reloadTimer, world.config);
     this.updateFlash();
@@ -240,15 +248,22 @@ export class Viewmodel {
     }
   }
 
-  private updateSway(world: WorldState, realDt: number, clock: number): void {
+  private updateSway(
+    world: WorldState,
+    realDt: number,
+    clock: number,
+    walking: boolean
+  ): void {
     const { player } = world;
+    // Zero when the world did not step, so the damp below eases the bob out instead of looping it.
+    const velocity = walking
+      ? Math.hypot(player.velocity.x, player.velocity.y)
+      : 0;
     const speed = clamp01(
-      Math.hypot(player.velocity.x, player.velocity.y) /
-        Math.max(1e-3, world.config.player.moveSpeed)
+      velocity / Math.max(1e-3, world.config.player.moveSpeed)
     );
     this.speed = damp(this.speed, speed, 10, realDt);
-    this.bobPhase +=
-      realDt * Math.hypot(player.velocity.x, player.velocity.y) * 4.4;
+    this.bobPhase += realDt * velocity * 4.4;
 
     const dt = Math.max(realDt, 1e-3);
     const yawRate = wrapAngle(player.yaw - this.lastYaw) / dt;
