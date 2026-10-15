@@ -1,7 +1,7 @@
 "use client";
 
 import type { PieceKind, RunResult } from "@buckshot/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ResultsCard } from "./results-card";
 import type { SaveStatus } from "./use-run-saver";
 
@@ -11,6 +11,11 @@ const BEAT_MS = 850;
 /** Let the renderer's death camera play before covering it. */
 const LOSS_REVEAL_DELAY_MS = 1500;
 const SKIP_KEYS = new Set(["Enter", "Space", "Escape"]);
+/**
+ * The pointer stays locked during the chant, so a follow-up trigger pull right after a
+ * first-barrel kill is also a pointerdown; it must not skip the chant by reflex.
+ */
+const SKIP_POINTER_GRACE_MS = 400;
 
 const GLOW = "0 0 12px #7FE7FF, 0 0 36px rgba(127, 231, 255, 0.55)";
 
@@ -32,8 +37,8 @@ function RestartHint() {
 
 /**
  * Victory: the SUPERHOT chant, "CHECK" (hairline) / "MATE" (black, near full width) slamming in
- * alternation over a dimmed, blue-tinted, blurred scene, then the results card. Any click or
- * Enter/Space skips the chant.
+ * alternation over a dimmed, blue-tinted, blurred scene, then the results card. Enter/Space/Escape,
+ * or a click after a short grace, skips the chant.
  */
 export function WinOverlay({
   onPlayAgain,
@@ -42,6 +47,7 @@ export function WinOverlay({
   saveStatus,
 }: GameOverOverlayProps) {
   const [beat, setBeat] = useState(0);
+  const mountedAt = useRef(performance.now());
   const revealed = beat >= CHANT_BEATS;
 
   // One timer per beat (re-armed on every beat change) so a skip cancels the pending one cleanly.
@@ -59,15 +65,20 @@ export function WinOverlay({
       return;
     }
     const skip = () => setBeat(CHANT_BEATS);
+    const onPointer = () => {
+      if (performance.now() - mountedAt.current >= SKIP_POINTER_GRACE_MS) {
+        skip();
+      }
+    };
     const onKey = (event: KeyboardEvent) => {
       if (SKIP_KEYS.has(event.code)) {
         skip();
       }
     };
-    window.addEventListener("pointerdown", skip);
+    window.addEventListener("pointerdown", onPointer);
     window.addEventListener("keydown", onKey);
     return () => {
-      window.removeEventListener("pointerdown", skip);
+      window.removeEventListener("pointerdown", onPointer);
       window.removeEventListener("keydown", onKey);
     };
   }, [revealed, onReveal]);

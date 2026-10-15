@@ -15,6 +15,11 @@ import { createGame } from "./runtime";
 const MAX_FRAME_SECONDS = 0.1;
 /** Above 2x the GPU cost grows quadratically for no visible gain. */
 const MAX_PIXEL_RATIO = 2;
+/**
+ * R is also the reload key and gets mashed, so a reflex press just after the kill (or the capture)
+ * must not wipe the death camera, the chant or the results card. Only a deliberate R restarts.
+ */
+const RESTART_GRACE_MS = 800;
 
 export interface GameClientOptions {
   readonly canvas: HTMLCanvasElement;
@@ -53,6 +58,8 @@ export class GameClient {
   private rafId: number | null = null;
   private lastFrame = 0;
   private gameOverReported: boolean;
+  /** `performance.now()` when the current game ended; gates the instant restart. */
+  private gameOverAt = 0;
   private disposed: boolean;
 
   constructor(options: GameClientOptions) {
@@ -203,6 +210,7 @@ export class GameClient {
       return;
     }
     this.gameOverReported = true;
+    this.gameOverAt = performance.now();
     const result = toRunResult(world);
     this.hud.setLastResult(result);
     const { onGameOver } = this.options;
@@ -234,7 +242,11 @@ export class GameClient {
       });
       return;
     }
-    if (code === "KeyR" && this.simulation.world.status !== "playing") {
+    if (
+      code === "KeyR" &&
+      this.simulation.world.status !== "playing" &&
+      performance.now() - this.gameOverAt >= RESTART_GRACE_MS
+    ) {
       // SUPERHOT-style instant retry; keydown is a user gesture, so re-lock if the cursor was freed.
       this.restart();
       this.start();

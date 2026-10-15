@@ -88,7 +88,7 @@ export function GameView({ playerName, signedIn }: GameViewProps) {
           lockRefused={lockRefused}
           onPlay={play}
           playerName={playerName}
-          resumed={(hud?.gameTime ?? 0) > 0}
+          resumed={intro !== "pending"}
           signedIn={signedIn}
         />
       ) : null}

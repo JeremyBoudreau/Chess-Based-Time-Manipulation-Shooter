@@ -109,7 +109,7 @@ export function AmmoDisplay({
     return pip === reserve ? regenProgress : 0;
   };
   return (
-    <div className="pointer-events-none absolute bottom-6 left-6 flex select-none flex-col gap-2">
+    <div className="buckshot-motion pointer-events-none absolute bottom-6 left-6 flex select-none flex-col gap-2">
       <div className="flex items-end gap-1.5">
         {range(capacity).map((barrel) => (
           <ShellIcon full={barrel < loaded} key={`shell-${barrel}`} />
