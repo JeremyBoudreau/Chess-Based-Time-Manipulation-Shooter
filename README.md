@@ -10,6 +10,18 @@ A first-person 3D chess shooter for the browser. It mixes three games I love:
 
 White pieces shake and flash red before they act. If you are standing on a square they attack when they act, you die, because the king has one hit point. Otherwise they close in. Kill the white king to win.
 
+## Difficulties
+
+Each difficulty is the previous white army plus reinforcements.
+
+| Difficulty | White army |
+| --- | --- |
+| **Easy** | 5 pawns, a rook, a bishop and the king (8 pieces) |
+| **Medium** | Easy plus a rook, a bishop and 3 pawns (13 pieces) |
+| **Hard** | Medium plus two knights and the queen: the full 16-piece army |
+
+Pick a difficulty on the start screen, or link straight to one with `/play?difficulty=hard`. The leaderboard and your profile track each difficulty separately.
+
 ## How to play
 
 | Input | Action |
@@ -96,6 +108,7 @@ SQLite runs through libSQL. The same code that opens a local `file:` database in
   - 2 shells loaded, a 6-shell reserve refilled only by single-shell pickups on empty squares (pieces crush the ones they move over), and a break-action reload.
   - SUPERHOT time with stacking effects. Movement and camera add up to 1× (1.75× sprinting with Shift). Reloading adds 1× and lifts the cap to 1.5× (2.25× sprinting). A short burst follows each shot, and standing still crawls at 1%.
   - Pieces act every ~2.7–4.4 game-seconds depending on type.
+  - Three difficulties (Easy, Medium, Hard), each a larger white army, up to the full 16 pieces.
   - Pawns promote to queens. Killing the white king wins.
 - **Feel.**
   - Low-poly Staunton pieces rebuilt procedurally from the reference set.
@@ -109,7 +122,7 @@ SQLite runs through libSQL. The same code that opens a local `file:` database in
 
 ### What is incomplete
 
-- Roguelike runs, upgrades, classes and alternative white setups are designed in but not built. They would plug into the `Loadout`, `SetupRegistry`, `PieceCatalog` and `TimePolicy` seams.
+- Roguelike runs, upgrades and classes are designed in but not built. They would plug into the `Loadout`, `PieceCatalog` and `TimePolicy` seams; new white armies go in `SetupRegistry`, which is where the three difficulties live.
 - There is no anti-cheat. The client runs the simulation and the server only sanity-checks results. The seeded `Rng` seam would allow a server-side replay of the inputs later.
 - Balance has only been tuned lightly. The knobs are in `packages/core/src/config.ts`.
 - No mobile or touch controls. The game needs a mouse and keyboard with pointer lock.
