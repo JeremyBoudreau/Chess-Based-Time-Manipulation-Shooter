@@ -1,5 +1,10 @@
 "use client";
 
+import {
+  CALLSIGN_RULE,
+  MAX_CALLSIGN_LENGTH,
+  normalizeCallsign,
+} from "@buckshot/auth/callsign";
 import { signIn, signUp } from "@buckshot/auth/client";
 import { Button } from "@buckshot/ui/components/button";
 import {
@@ -15,10 +20,9 @@ import { Label } from "@buckshot/ui/components/label";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useCallback, useId, useState } from "react";
+import { withNext } from "@/lib/safe-next";
 
 const MIN_PASSWORD_LENGTH = 8;
-const MAX_CALLSIGN_LENGTH = 24;
-const AFTER_AUTH_PATH = "/play?welcome=1";
 
 type Mode = "sign-in" | "sign-up";
 
@@ -71,8 +75,17 @@ const submitCredentials = async (
   }
 };
 
-/** Shared sign-in / sign-up card. Better Auth sets the session cookie; we just navigate on success. */
-export function AuthForm({ mode }: { readonly mode: Mode }) {
+/**
+ * Shared sign-in / sign-up card. Better Auth sets the session cookie; we just navigate on success,
+ * to `next` (an already-validated same-origin path the page read from `?next=`).
+ */
+export function AuthForm({
+  mode,
+  next,
+}: {
+  readonly mode: Mode;
+  readonly next: string;
+}) {
   const router = useRouter();
   const ids = useId();
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +98,14 @@ export function AuthForm({ mode }: { readonly mode: Mode }) {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
       const email = readField(form, "email");
+      const name = readField(form, "name");
       const password = String(form.get("password") ?? "");
+
+      // `required` accepts whitespace, which trims to an empty callsign; the server rejects it too.
+      if (mode === "sign-up" && normalizeCallsign(name) === null) {
+        setError(CALLSIGN_RULE);
+        return;
+      }
 
       if (password.length < MIN_PASSWORD_LENGTH) {
         setError(`Passwords need at least ${MIN_PASSWORD_LENGTH} characters.`);
@@ -96,7 +116,7 @@ export function AuthForm({ mode }: { readonly mode: Mode }) {
       setError(null);
       const message = await submitCredentials(mode, {
         email,
-        name: readField(form, "name"),
+        name,
         password,
       });
       if (message) {
@@ -104,10 +124,10 @@ export function AuthForm({ mode }: { readonly mode: Mode }) {
         setError(message);
         return;
       }
-      router.push(AFTER_AUTH_PATH);
+      router.push(next);
       router.refresh();
     },
-    [mode, router]
+    [mode, next, router]
   );
 
   return (
@@ -185,7 +205,10 @@ export function AuthForm({ mode }: { readonly mode: Mode }) {
             {mode === "sign-up" ? "Already ranked? " : "New here? "}
             <Link
               className="font-medium text-foreground underline-offset-4 hover:text-blood hover:underline"
-              href={mode === "sign-up" ? "/sign-in" : "/sign-up"}
+              href={withNext(
+                mode === "sign-up" ? "/sign-in" : "/sign-up",
+                next
+              )}
             >
               {mode === "sign-up" ? "Sign in" : "Create an account"}
             </Link>

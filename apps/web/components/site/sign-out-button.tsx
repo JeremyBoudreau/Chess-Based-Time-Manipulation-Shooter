@@ -17,17 +17,24 @@ export function SignOutButton() {
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
 
+  // The auth client resolves with `error` for HTTP failures but rejects on network ones (offline,
+  // DNS, reset), so both paths must re-enable the button.
   const handleClick = useCallback(async () => {
     setPending(true);
     setFailed(false);
-    const { error } = await signOut();
-    setPending(false);
-    if (error) {
+    try {
+      const { error } = await signOut();
+      if (error) {
+        setFailed(true);
+        return;
+      }
+      router.push("/");
+      router.refresh();
+    } catch {
       setFailed(true);
-      return;
+    } finally {
+      setPending(false);
     }
-    router.push("/");
-    router.refresh();
   }, [router]);
 
   return (

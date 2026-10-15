@@ -8,8 +8,11 @@ import {
   text,
 } from "drizzle-orm/sqlite-core";
 
-/** SQLite expression for "now" in epoch milliseconds, matching `timestamp_ms` columns. */
-const nowMs = sql`(cast(unixepoch('subsecond') * 1000 as integer))`;
+/**
+ * SQLite expression for "now" in epoch milliseconds, matching `timestamp_ms` columns. Exported so
+ * queries that compare against `created_at` use the database clock that wrote it.
+ */
+export const nowMs = sql`(cast(unixepoch('subsecond') * 1000 as integer))`;
 
 /*
  * Better Auth core tables. Property names must match Better Auth's field names (the drizzle

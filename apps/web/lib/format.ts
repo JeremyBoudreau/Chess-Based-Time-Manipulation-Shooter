@@ -12,15 +12,26 @@ export const formatPercent = (ratio: number): string =>
 export const accuracyOf = (pelletsHit: number, pelletsFired: number): number =>
   pelletsFired > 0 ? pelletsHit / pelletsFired : 0;
 
-const dateFormatter = new Intl.DateTimeFormat("en", {
+/** Short date for tables; a fixed locale so the server and browser agree on the shape. */
+export const DATE_FORMAT: Intl.DateTimeFormatOptions = {
   day: "numeric",
   hour: "2-digit",
   minute: "2-digit",
   month: "short",
+};
+
+const utcDateFormatter = new Intl.DateTimeFormat("en", {
+  ...DATE_FORMAT,
+  timeZone: "UTC",
 });
 
-/** Short, locale-stable date for tables (server-rendered, so a fixed locale avoids hydration drift). */
-export const formatDate = (date: Date): string => dateFormatter.format(date);
+/**
+ * The server-rendered date, pinned to UTC and labelled as such: the server's own zone (UTC on
+ * Vercel, anything locally) says nothing about the viewer's. `LocalTime` swaps in the viewer's
+ * zone after hydration.
+ */
+export const formatDateUtc = (date: Date): string =>
+  `${utcDateFormatter.format(date)} UTC`;
 
 /** "rook" → "Rook". */
 export const capitalize = (word: string): string =>

@@ -14,15 +14,16 @@ import { Effect } from "effect";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { LocalTime } from "@/components/site/local-time";
 import { SectionHeading } from "@/components/site/section-heading";
 import {
   accuracyOf,
   capitalize,
-  formatDate,
   formatGameTime,
   formatPercent,
 } from "@/lib/format";
 import { PIECE_GLYPHS } from "@/lib/pieces";
+import { withNext } from "@/lib/safe-next";
 import { runServer } from "@/lib/server-runtime";
 import { getViewer } from "@/lib/session";
 
@@ -76,7 +77,7 @@ function StatCard({
 export default async function ProfilePage() {
   const viewer = await getViewer();
   if (!viewer) {
-    redirect("/sign-in");
+    redirect(withNext("/sign-in", "/profile"));
   }
 
   const { recent, stats } = await loadProfile(viewer.user.id);
@@ -212,9 +213,7 @@ export default async function ProfilePage() {
                         : "—"}
                     </TableCell>
                     <TableCell className="pr-4 text-right text-muted-foreground">
-                      <time dateTime={run.createdAt.toISOString()}>
-                        {formatDate(run.createdAt)}
-                      </time>
+                      <LocalTime iso={run.createdAt.toISOString()} />
                     </TableCell>
                   </TableRow>
                 ))}

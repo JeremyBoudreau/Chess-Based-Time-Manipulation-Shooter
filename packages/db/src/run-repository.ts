@@ -4,14 +4,34 @@ import {
   type PieceKind,
   type RunResult,
 } from "@buckshot/core";
-import { and, asc, count, desc, eq, isNotNull, min, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  isNotNull,
+  min,
+  type SQLWrapper,
+  sql,
+} from "drizzle-orm";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { Context, Data, Effect, Layer } from "effect";
 import { Database, type DrizzleDb } from "./client";
-import { type Run, run, user } from "./schema";
+import { nowMs, type Run, run, user } from "./schema";
 
 export class DbError extends Data.TaggedError("DbError")<{
   readonly operation: string;
   readonly cause: unknown;
+}> {}
+
+/**
+ * The user saved another run too recently for this one to have been played in between: either the
+ * claimed real time does not fit since their previous save, or saves are arriving faster than any
+ * game can end. Stops a signed-in client from replaying one plausible payload to farm the boards.
+ */
+export class RunTooSoon extends Data.TaggedError("RunTooSoon")<{
+  readonly windowMs: number;
 }> {}
 
 export interface SavedRun {
@@ -61,15 +81,35 @@ export interface RunRepositoryShape {
     userId: string,
     limit?: number
   ) => Effect.Effect<readonly Run[], DbError>;
+  /** Fails with RunTooSoon, writing nothing, when the run cannot fit since the user's last save. */
   readonly save: (
     userId: string,
     result: RunResult
-  ) => Effect.Effect<SavedRun, DbError>;
+  ) => Effect.Effect<SavedRun, DbError | RunTooSoon>;
   readonly statsForUser: (userId: string) => Effect.Effect<UserStats, DbError>;
 }
 
 const DEFAULT_LEADERBOARD_SIZE = 20;
 const DEFAULT_RECENT_RUNS = 20;
+
+/**
+ * Real time only accrues while the game steps, so a run's `realTimeMs` never exceeds the wall-clock
+ * time since the previous run ended. The previous save can land after the next run started,
+ * though, when the player restarts instantly while that request is slow (a cold start); this much
+ * of that overlap is forgiven.
+ */
+export const SAVE_LATENCY_SLACK_MS = 5000;
+
+/**
+ * Floor on the gap between two saves. Without it a payload claiming under the latency slack of
+ * real time could be replayed back to back. No legitimate game ends this fast: White's first
+ * action takes over two game-seconds and a win needs at least one reload.
+ */
+export const MIN_SAVE_INTERVAL_MS = 2000;
+
+/** How far back a previous save blocks this one: the run's own duration, less the latency slack. */
+export const saveWindowMs = (result: RunResult): number =>
+  Math.max(result.realTimeMs - SAVE_LATENCY_SLACK_MS, MIN_SAVE_INTERVAL_MS);
 
 /** Lifts a drizzle promise into Effect so every query fails the same, typed way. */
 const query = <A>(operation: string, execute: () => PromiseLike<A>) =>
@@ -119,6 +159,10 @@ const toKillCounts = (row: Record<string, unknown>): KillCounts => {
   return counts;
 };
 
+/** A column paired with its value, encoded the way drizzle's insert builder would (JSON, etc.). */
+const cell = (column: AnySQLiteColumn, value: unknown) =>
+  [column, sql.param(value, column)] as const;
+
 /** Builds the repository against a concrete drizzle client. */
 export const makeRunRepository = (db: DrizzleDb): RunRepositoryShape => {
   const bestWinMs = (userId: string) =>
@@ -136,23 +180,48 @@ export const makeRunRepository = (db: DrizzleDb): RunRepositoryShape => {
     const previousBest =
       result.outcome === "won" ? yield* bestWinMs(userId) : null;
     const id = crypto.randomUUID();
-    yield* query("insertRun", () =>
-      db.insert(run).values({
-        distanceMoved: result.distanceMoved,
-        gameTimeMs: result.gameTimeMs,
-        id,
-        killedBy: result.killedBy,
-        kills: result.kills,
-        outcome: result.outcome,
-        pelletsFired: result.pelletsFired,
-        pelletsHit: result.pelletsHit,
-        realTimeMs: result.realTimeMs,
-        setupId: result.setupId,
-        shotsFired: result.shotsFired,
-        totalKills: totalKillsOf(result.kills),
-        userId,
-      })
+    const windowMs = saveWindowMs(result);
+    const cells: readonly (readonly [AnySQLiteColumn, SQLWrapper])[] = [
+      [run.createdAt, nowMs],
+      cell(run.distanceMoved, result.distanceMoved),
+      cell(run.gameTimeMs, result.gameTimeMs),
+      cell(run.id, id),
+      cell(run.killedBy, result.killedBy),
+      cell(run.kills, result.kills),
+      cell(run.outcome, result.outcome),
+      cell(run.pelletsFired, result.pelletsFired),
+      cell(run.pelletsHit, result.pelletsHit),
+      cell(run.realTimeMs, result.realTimeMs),
+      cell(run.setupId, result.setupId),
+      cell(run.shotsFired, result.shotsFired),
+      cell(run.totalKills, totalKillsOf(result.kills)),
+      cell(run.userId, userId),
+    ];
+    /*
+     * One statement, so the "no recent save" check and the insert are atomic: SQLite takes the write
+     * lock before evaluating the subquery, and parallel requests cannot all see the same last run.
+     * drizzle's insert builder has no conditional form, hence the raw SQL.
+     */
+    const inserted = yield* query("insertRun", () =>
+      db.run(sql`
+        insert into ${run} (${sql.join(
+          cells.map(([column]) => sql.identifier(column.name)),
+          sql`, `
+        )})
+        select ${sql.join(
+          cells.map(([, value]) => value),
+          sql`, `
+        )}
+        where not exists (
+          select 1 from ${run}
+          where ${run.userId} = ${userId}
+            and ${run.createdAt} > ${nowMs} - ${windowMs}
+        )
+      `)
     );
+    if (inserted.rowsAffected === 0) {
+      return yield* new RunTooSoon({ windowMs });
+    }
     return { id, personalBest: isPersonalBest(result, previousBest) };
   });
 

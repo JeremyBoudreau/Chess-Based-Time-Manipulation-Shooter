@@ -1,25 +1,50 @@
 import { db, schema } from "@buckshot/db";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError } from "better-auth/api";
 import { nextCookies, toNextJsHandler } from "better-auth/next-js";
 import { Context, Data, Effect, Layer } from "effect";
+import { CALLSIGN_RULE, normalizeCallsign } from "./callsign";
 
-/** Only ever used when BETTER_AUTH_SECRET is unset, so local dev works with zero setup. */
+/** Only ever used outside production with no secret configured, so local dev works with zero setup. */
 const DEV_FALLBACK_SECRET =
   "buckshot-gambit-dev-only-secret-7f3a9c1e5b2d8f4a6c0e9b7d3f1a5c8e";
 
-/** Falls back to a dev secret but shouts about it in production, where sessions would be forgeable. */
-const resolveSecret = (): string => {
-  const secret = process.env.BETTER_AUTH_SECRET;
+/**
+ * Fails closed in production. The fallback is committed to the repo, and Better Auth trusts any
+ * JWT signed with the secret (e.g. /verify-email mints a session from one), so running on it would
+ * let anyone sign in as any user whose email they know. `next build` evaluates this module with
+ * NODE_ENV=production but serves nothing, so it may use the fallback; at runtime the import throws
+ * and every request fails loudly instead. AUTH_SECRET is read here because an explicit `secret`
+ * shadows Better Auth's own lookup of it; with only BETTER_AUTH_SECRETS (the rotation list) set,
+ * this returns undefined and Better Auth reads the list itself.
+ */
+const resolveSecret = (): string | undefined => {
+  const secret = process.env.BETTER_AUTH_SECRET || process.env.AUTH_SECRET;
   if (secret) {
     return secret;
   }
-  if (process.env.NODE_ENV === "production") {
-    console.warn(
-      "[buckshot/auth] BETTER_AUTH_SECRET is not set; using the insecure development secret."
+  if (process.env.BETTER_AUTH_SECRETS) {
+    return undefined;
+  }
+  const productionRuntime =
+    process.env.NODE_ENV === "production" &&
+    process.env.NEXT_PHASE !== "phase-production-build";
+  if (productionRuntime) {
+    throw new Error(
+      "[buckshot/auth] BETTER_AUTH_SECRET must be set in production; refusing to start on the committed development secret."
     );
   }
   return DEV_FALLBACK_SECRET;
+};
+
+/** Rejects blank or oversized callsigns at the database layer, whichever endpoint sent them. */
+const requireCallsign = (name: unknown): string => {
+  const callsign = normalizeCallsign(name);
+  if (callsign === null) {
+    throw new APIError("BAD_REQUEST", { message: CALLSIGN_RULE });
+  }
+  return callsign;
 };
 
 const MIN_PASSWORD_LENGTH = 8;
@@ -28,6 +53,26 @@ const MIN_PASSWORD_LENGTH = 8;
 export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL || undefined,
   database: drizzleAdapter(db, { provider: "sqlite", schema }),
+  /*
+   * Better Auth's sign-up and update-user schemas accept any string as `name`, so the callsign
+   * rules are enforced here rather than trusted from the form. Better Auth merges `data` over the
+   * original fields; updates that leave the name alone (email verification, email change) pass.
+   */
+  databaseHooks: {
+    user: {
+      create: {
+        before: async (user) => ({
+          data: { name: requireCallsign(user.name) },
+        }),
+      },
+      update: {
+        before: async (user) =>
+          user.name === undefined
+            ? undefined
+            : { data: { name: requireCallsign(user.name) } },
+      },
+    },
+  },
   emailAndPassword: {
     autoSignIn: true,
     enabled: true,

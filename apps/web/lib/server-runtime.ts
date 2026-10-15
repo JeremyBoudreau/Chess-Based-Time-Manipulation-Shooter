@@ -14,17 +14,14 @@ export type ServerServices = Layer.Success<typeof ServerLive>;
 
 type ServerRuntime = ManagedRuntime.ManagedRuntime<ServerServices, never>;
 
-const globalForRuntime = globalThis as typeof globalThis & {
-  __buckshotServerRuntime?: ServerRuntime;
-};
-
 /**
- * The one server runtime. Cached on `globalThis` so Next.js dev hot reloads reuse the built layer
- * (and its database connection) instead of building a fresh one per reload.
+ * The one server runtime, built once per evaluation of this module (once per production server
+ * process). Deliberately not cached on `globalThis`: a cached runtime would keep running the old
+ * service closures after a dev hot reload. The expensive part, the libsql connection, is already
+ * reused across reloads by the cache in packages/db/src/client.ts, and both layers hold nothing
+ * that needs disposing, so a stale runtime is simply garbage-collected with its module.
  */
-export const serverRuntime: ServerRuntime =
-  globalForRuntime.__buckshotServerRuntime ?? ManagedRuntime.make(ServerLive);
-globalForRuntime.__buckshotServerRuntime = serverRuntime;
+export const serverRuntime: ServerRuntime = ManagedRuntime.make(ServerLive);
 
 /** Runs a server effect to a promise; typed failures reject, so handle the ones you expect first. */
 export const runServer = <A, E>(

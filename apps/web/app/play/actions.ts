@@ -34,7 +34,9 @@ const failure = (reason: "unauthenticated" | "invalid" | "error") =>
 /**
  * Persists a finished run for the signed-in player. The payload comes straight from the browser,
  * so it is decoded against the RunResult schema and sanity-checked before it can reach the
- * leaderboard. Never throws: every failure maps to a reason the game UI can show.
+ * leaderboard, and the repository refuses saves that arrive faster than the run could have been
+ * played (so one payload cannot be replayed to farm the boards). Never throws: every failure maps
+ * to a reason the game UI can show.
  */
 export async function saveRunAction(input: unknown): Promise<SaveRunResponse> {
   const requestHeaders = await headers();
@@ -74,6 +76,10 @@ export async function saveRunAction(input: unknown): Promise<SaveRunResponse> {
         Effect.logWarning(`saveRun: rejected run (${error.reason})`).pipe(
           Effect.andThen(failure("invalid"))
         ),
+      RunTooSoon: (error) =>
+        Effect.logWarning(
+          `saveRun: rejected run (another save within ${error.windowMs}ms)`
+        ).pipe(Effect.andThen(failure("invalid"))),
       SchemaError: () => failure("invalid"),
       Unauthenticated: () => failure("unauthenticated"),
     }),
