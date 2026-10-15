@@ -84,12 +84,12 @@ describe("createWorld", () => {
 });
 
 describe("time", () => {
-  test("standing still for 10 seconds stops the clock", () => {
+  test("standing still for 10 seconds barely moves the clock", () => {
     const world = makeWorld();
     run(world, makeDeps(), 10);
     expect(world.realTime).toBeCloseTo(10, 6);
-    expect(DEFAULT_TIME_POLICY.idleScale).toBe(0);
-    expect(world.gameTime).toBe(0);
+    expect(DEFAULT_TIME_POLICY.idleScale).toBeGreaterThan(0);
+    expect(world.gameTime).toBeCloseTo(DEFAULT_TIME_POLICY.idleScale * 10, 6);
     expect(world.pieces.every((entry) => entry.phase === "idle")).toBe(true);
   });
 
@@ -441,8 +441,7 @@ describe("invariants", () => {
     expect(player.loaded).toBeLessThanOrEqual(world.config.shotgun.capacity);
     expect(player.reserve).toBeGreaterThanOrEqual(0);
     expect(player.reserve).toBeLessThanOrEqual(world.config.shotgun.reserveMax);
-    // Smoothing towards a zero idle scale can underflow to exactly 0 after a long stop.
-    expect(world.timeScale).toBeGreaterThanOrEqual(0);
+    expect(world.timeScale).toBeGreaterThan(0);
     expect(world.timeScale).toBeLessThanOrEqual(1);
   };
 

@@ -87,11 +87,12 @@ export const DEFAULT_PLAYER: PlayerStats = {
 };
 
 /**
- * Time only moves when the king does: standing completely still is a hard freeze (idleScale 0), so
- * a player can stop and think mid-telegraph without dying. Walking, looking and reloading run it.
+ * Time moves with the king: walking, looking and reloading run it at up to full speed. Standing
+ * still is a SUPERHOT-style creep (1%) rather than a hard freeze — the world never looks paused,
+ * pellets visibly inch forward, yet 10 seconds of thinking costs only 0.1 s of game time.
  */
 export const DEFAULT_TIME_POLICY: TimePolicyData = {
-  idleScale: 0,
+  idleScale: 0.01,
   lookFullSpeed: 5,
   lookMaxScale: 0.7,
   responsiveness: 14,

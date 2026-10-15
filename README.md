@@ -6,7 +6,7 @@ A first-person 3D chess shooter for the browser. It mixes three games I love:
 
 - **Shotgun King**: a lone king with a buckshot shotgun against a white army.
 - **FPS Chess**: you stand on the board as a chess piece, with the pieces towering over you.
-- **SUPERHOT**: time stops while you stand still, and bullets hang in the air.
+- **SUPERHOT**: time crawls at 1% while you stand still, and bullets hang in the air.
 
 White pieces shake and flash red before they act. If you are standing on a square they attack when they act, you die, because the king has one hit point. Otherwise they close in. Kill the white king to win.
 
@@ -92,13 +92,13 @@ SQLite runs through libSQL. The same code that opens a local `file:` database in
   - When a piece acts it captures the king if it can. Otherwise it moves to the legal square closest to the king, or makes a random move that leans toward the king.
   - The shotgun fires 5 horizontal pellets in a stratified-random ±24° fan. Pellets travel 10 squares/s with a 5-square range. Hitboxes are whole squares, and a grid traversal stops pellets slipping between pieces.
   - 2 shells loaded, 6 regenerating reserve shells, and a break-action reload.
-  - SUPERHOT time: the world only runs while you move, turn or reload, plus a short burst after each shot.
+  - SUPERHOT time: the world runs while you move, turn or reload, plus a short burst after each shot, and crawls at 1% while you stand still.
   - Pawns promote to queens. Killing the white king wins.
 - **Feel.**
   - Low-poly Staunton pieces rebuilt procedurally from the reference set.
-  - Pellets are black slugs with red trails that hang in mid-air while time is stopped.
+  - Pellets are black slugs with red trails that hang in mid-air while you stand still.
   - Shatter debris and damage numbers.
-  - Synthesized sound, muffled while time is stopped.
+  - Synthesized sound, muffled while you stand still.
   - A **CHECK / MATE** victory chant and a SUPERHOT-style death camera.
 - **Persistence.** Finished runs are saved for signed-in players: outcome, game time, real time, kills per piece, accuracy and the piece that killed you. The server decodes each run against a shared schema, checks it for plausibility and rate-limits saves.
 - **Leaderboard and profile.** The leaderboard shows the fastest regicides by game time and the players with the most kills. The profile shows win rate, best time, accuracy, nemesis, favourite victim and run history.

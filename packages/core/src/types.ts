@@ -233,7 +233,7 @@ export interface PlayerStats {
 }
 
 export interface TimePolicyData {
-  /** Time scale while completely still (0 = hard freeze, the default: time only moves when the king does). */
+  /** Time scale while completely still (SUPERHOT never fully freezes; 0 = hard freeze). */
   readonly idleScale: number;
   /** Camera angular speed (rad/real s) that counts as "full speed" time. */
   readonly lookFullSpeed: number;
