@@ -65,7 +65,8 @@ export const DEFAULT_PIECE_CATALOG: PieceCatalogData = {
 /**
  * Double-barrel buckshot. Pellets fly flat across the board at 10 squares/s and vanish after 5,
  * so the furthest pellet lands ~0.5 s after the trigger pull. A ±24° stratified-random fan
- * puts every pellet on an adjacent square but only ~1–2 on a square 4 away.
+ * puts every pellet on an adjacent square but only ~1–2 on a square 4 away. The gun holds 2 and the
+ * king carries up to 8 more (2 + 8), starting full.
  */
 export const DEFAULT_SHOTGUN: ShotgunStats = {
   capacity: 2,
@@ -75,8 +76,8 @@ export const DEFAULT_SHOTGUN: ShotgunStats = {
   pelletSpeed: 10,
   pellets: 5,
   reloadDuration: 1.1,
-  reserveMax: 6,
-  reserveStart: 6,
+  reserveMax: 8,
+  reserveStart: 8,
   spreadDegrees: 24,
   spreadJitter: 0.9,
 };

@@ -34,7 +34,7 @@ Pick a difficulty on the start screen, or link straight to one with `/play?diffi
 | `Esc` | Pause. |
 
 - **Time stacks.** Moving and turning add together, capped at 1× (1.75× while sprinting). Reloading adds 1× and raises that cap by 0.5×. A reload standing still runs at 1×, walking while reloading at 1.5×, and sprinting while reloading at 2.25×. Standing still, time crawls at 1%.
-- The gun holds **2 shells**, with up to **6 in reserve**. Shells don't regenerate. Single shells drop onto empty squares about every 5 game-seconds, at most 3 at a time and never within 2 squares of you. When you are down to 0–1 shells they drop twice as often. Walk over one to pick it up. Any piece that moves over a shell crushes it.
+- The gun holds **2 shells**, with up to **8 in reserve** (you start full). Shells don't regenerate. Single shells drop onto empty squares about every 5 game-seconds, at most 3 at a time and never within 2 squares of you. When you are down to 0–1 shells they drop twice as often. Walk over one to pick it up. Any piece that moves over a shell crushes it.
 - Pellets travel 5 squares and hit the first occupied **square** they enter. You cannot shoot over a pawn or between two pieces.
 - Red floor tiles show the squares that a shaking piece is about to attack. Don't be standing on one when it acts.
 
@@ -105,7 +105,7 @@ SQLite runs through libSQL. The same code that opens a local `file:` database in
   - Pieces telegraph by shaking and blinking red, and the squares they threaten glow red.
   - When a piece acts it captures the king if it can. Otherwise it moves to the legal square closest to the king, or makes a random move that leans toward the king.
   - The shotgun fires 5 horizontal pellets in a stratified-random ±24° fan. Pellets travel 10 squares/s with a 5-square range. Hitboxes are whole squares, and a grid traversal stops pellets slipping between pieces.
-  - 2 shells loaded, a 6-shell reserve refilled only by single-shell pickups on empty squares (pieces crush the ones they move over), and a break-action reload.
+  - 2 shells loaded, an 8-shell reserve refilled only by single-shell pickups on empty squares (pieces crush the ones they move over), and a break-action reload.
   - SUPERHOT time with stacking effects. Movement and camera add up to 1× (1.75× sprinting with Shift). Reloading adds 1× and lifts the cap to 1.5× (2.25× sprinting). A short burst follows each shot, and standing still crawls at 1%.
   - Pieces act every ~2.7–4.4 game-seconds depending on type.
   - Three difficulties (Easy, Medium, Hard), each a larger white army, up to the full 16 pieces.
