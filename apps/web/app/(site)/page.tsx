@@ -1,7 +1,9 @@
 import {
   DEFAULT_PIECE_CATALOG,
+  DEFAULT_PLAYER,
   DEFAULT_SHOTGUN,
   DEFAULT_TIME_POLICY,
+  maxTimeScale,
   PIECE_KINDS,
 } from "@buckshot/core";
 import { Button } from "@buckshot/ui/components/button";
@@ -28,7 +30,7 @@ import { getViewer } from "@/lib/session";
 
 const PILLARS = [
   {
-    body: `Two barrels, ${DEFAULT_SHOTGUN.pellets} pellets a shell, a fan of lead that shreds anything adjacent and tickles anything far. Reloading costs time. Shells trickle back. Every trigger pull is a decision.`,
+    body: `Two barrels, ${DEFAULT_SHOTGUN.pellets} pellets a shell, a fan of lead that shreds anything adjacent and tickles anything far. Reloading costs time. Spent shells stay spent: fresh shells drop one at a time onto empty squares, and any piece that moves over one crushes it. Every trigger pull is a decision.`,
     credit: "Shotgun King: The Final Checkmate",
     title: "Buckshot vs. bone",
   },
@@ -38,7 +40,7 @@ const PILLARS = [
     title: "Boots on the board",
   },
   {
-    body: "Stand still and the world nearly freezes. Walk, turn or reload and the clock runs. A piece shakes and blinks red before it strikes: that is your cue to be somewhere else.",
+    body: "Stand still and the world nearly freezes. Walk, turn or reload and the clock runs; sprint and it outruns real time. A piece shakes and blinks red before it strikes: that is your cue to be somewhere else.",
     credit: "SUPERHOT",
     title: "Time is yours",
   },
@@ -49,6 +51,11 @@ const CONTROLS = [
     action: "Move",
     keys: ["W", "A", "S", "D"],
     note: "Walking is what makes time flow.",
+  },
+  {
+    action: "Sprint",
+    keys: ["Shift"],
+    note: `${DEFAULT_PLAYER.sprintMultiplier}× speed, but time runs at ${DEFAULT_TIME_POLICY.sprintScale}× — faster than real time.`,
   },
   {
     action: "Aim",
@@ -63,7 +70,7 @@ const CONTROLS = [
   {
     action: "Reload",
     keys: ["R"],
-    note: "Time runs at full speed while you reload.",
+    note: `A reload adds ${DEFAULT_TIME_POLICY.reloadBonus}× to time and stacks with moving — up to ${maxTimeScale(DEFAULT_TIME_POLICY)}× mid-sprint.`,
   },
   {
     action: "Pause",
@@ -156,7 +163,7 @@ export default async function HomePage() {
             )}
           </div>
 
-          <dl className="mt-16 grid max-w-xl grid-cols-3 gap-4 border-white/10 border-t pt-6 font-mono text-xs uppercase tracking-widest">
+          <dl className="mt-16 grid max-w-2xl grid-cols-2 gap-4 border-white/10 border-t pt-6 font-mono text-xs uppercase tracking-widest sm:grid-cols-4">
             <div>
               <dt className="text-muted-foreground">Shells</dt>
               <dd className="mt-1 text-foreground text-lg">
@@ -171,6 +178,12 @@ export default async function HomePage() {
               <dt className="text-muted-foreground">Idle time</dt>
               <dd className="mt-1 text-foreground text-lg">
                 ×{DEFAULT_TIME_POLICY.idleScale}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Sprint time</dt>
+              <dd className="mt-1 text-foreground text-lg">
+                ×{DEFAULT_TIME_POLICY.sprintScale}
               </dd>
             </div>
           </dl>
@@ -210,7 +223,7 @@ export default async function HomePage() {
       <section className="border-white/5 border-y bg-card/30">
         <div className="mx-auto grid max-w-6xl gap-12 px-4 py-20 sm:px-6 sm:py-28 lg:grid-cols-[1fr_1.4fr]">
           <SectionHeading kicker="Controls">
-            Five
+            Six
             <br />
             inputs.
             <br />

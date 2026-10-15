@@ -15,12 +15,14 @@ White pieces shake and flash red before they act. If you are standing on a squar
 | Input | Action |
 | --- | --- |
 | `W` `A` `S` `D` | Move. Time runs while you move. |
+| `Shift` | Sprint: 1.6× speed, and time runs at up to 1.75×, faster than real time. |
 | Mouse | Aim. Turning the camera also moves time. |
 | Left click | Fire 5 pellets in a flat, wide spread. |
-| `R` | Reload. Time runs at full speed for the whole reload. |
+| `R` | Reload. Adds 1× to the time scale on top of whatever else you're doing. |
 | `Esc` | Pause. |
 
-- The gun holds **2 shells**. Up to **6 reserve shells** regenerate over game time.
+- **Time stacks.** Moving and turning add together, capped at 1× (1.75× while sprinting). Reloading adds 1× and raises that cap by 0.5×. A reload standing still runs at 1×, walking while reloading at 1.5×, and sprinting while reloading at 2.25×. Standing still, time crawls at 1%.
+- The gun holds **2 shells**, with up to **6 in reserve**. Shells don't regenerate. Single shells drop onto empty squares about every 5 game-seconds, at most 3 at a time and never within 2 squares of you. Walk over one to pick it up. Any piece that moves over a shell crushes it.
 - Pellets travel 5 squares and hit the first occupied **square** they enter. You cannot shoot over a pawn or between two pieces.
 - Red floor tiles show the squares that a shaking piece is about to attack. Don't be standing on one when it acts.
 
@@ -91,8 +93,9 @@ SQLite runs through libSQL. The same code that opens a local `file:` database in
   - Pieces telegraph by shaking and blinking red, and the squares they threaten glow red.
   - When a piece acts it captures the king if it can. Otherwise it moves to the legal square closest to the king, or makes a random move that leans toward the king.
   - The shotgun fires 5 horizontal pellets in a stratified-random ±24° fan. Pellets travel 10 squares/s with a 5-square range. Hitboxes are whole squares, and a grid traversal stops pellets slipping between pieces.
-  - 2 shells loaded, 6 regenerating reserve shells, and a break-action reload.
-  - SUPERHOT time: the world runs while you move, turn or reload, plus a short burst after each shot, and crawls at 1% while you stand still.
+  - 2 shells loaded, a 6-shell reserve refilled only by single-shell pickups on empty squares (pieces crush the ones they move over), and a break-action reload.
+  - SUPERHOT time with stacking effects. Movement and camera add up to 1× (1.75× sprinting with Shift). Reloading adds 1× and lifts the cap to 1.5× (2.25× sprinting). A short burst follows each shot, and standing still crawls at 1%.
+  - Pieces act every ~2.7–4.4 game-seconds depending on type.
   - Pawns promote to queens. Killing the white king wins.
 - **Feel.**
   - Low-poly Staunton pieces rebuilt procedurally from the reference set.
@@ -102,7 +105,7 @@ SQLite runs through libSQL. The same code that opens a local `file:` database in
   - A **CHECK / MATE** victory chant and a SUPERHOT-style death camera.
 - **Persistence.** Finished runs are saved for signed-in players: outcome, game time, real time, kills per piece, accuracy and the piece that killed you. The server decodes each run against a shared schema, checks it for plausibility and rate-limits saves.
 - **Leaderboard and profile.** The leaderboard shows the fastest regicides by game time and the players with the most kills. The profile shows win rate, best time, accuracy, nemesis, favourite victim and run history.
-- **Checks.** 58 core rule and simulation tests plus 7 repository tests. Strict type-check, Biome lint and `next build` all pass.
+- **Checks.** 93 core rule and simulation tests, 7 repository tests and 21 run-plausibility tests. Strict type-check, Biome lint and `next build` all pass.
 
 ### What is incomplete
 
