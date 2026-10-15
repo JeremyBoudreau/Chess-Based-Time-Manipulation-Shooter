@@ -1,3 +1,5 @@
+import { type AmmoHintInput, ammoHint } from "./ammo-hint";
+
 const SHELL_RED = "#E80C0C";
 const BRASS = "#E9D9A6";
 const BRASS_RIM = "#B8975A";
@@ -69,9 +71,6 @@ function ReservePip({ full }: { readonly full: boolean }) {
   );
 }
 
-/** Loaded + reserve at or below this and the HUD starts pointing at the shells on the board. */
-const LOW_AMMO = 2;
-
 export interface AmmoDisplayProps {
   readonly capacity: number;
   readonly loaded: number;
@@ -80,6 +79,8 @@ export interface AmmoDisplayProps {
   readonly reloadProgress: number | null;
   readonly reserve: number;
   readonly reserveMax: number;
+  /** The HUD's `shellSpawnRate`: above 1 while the board drops shells at the low-ammo rate. */
+  readonly shellSpawnRate: number;
 }
 
 /**
@@ -94,6 +95,7 @@ export function AmmoDisplay({
   reloadProgress,
   reserve,
   reserveMax,
+  shellSpawnRate,
 }: AmmoDisplayProps) {
   const reloading = reloadProgress !== null;
   return (
@@ -135,6 +137,7 @@ export function AmmoDisplay({
             loaded={loaded}
             pickupsOnBoard={pickupsOnBoard}
             reserve={reserve}
+            shellSpawnRate={shellSpawnRate}
           />
         )}
       </div>
@@ -142,45 +145,21 @@ export function AmmoDisplay({
   );
 }
 
-/**
- * One line, most urgent first: totally dry → go get a shell; barrels empty → reload; running low →
- * the board has more. With no shell on the board yet, it says to keep moving instead (shells drop
- * on a game-time timer, and game time barely passes unless you move).
- */
-function AmmoHint({
-  loaded,
-  pickupsOnBoard,
-  reserve,
-}: {
-  readonly loaded: number;
-  readonly pickupsOnBoard: number;
-  readonly reserve: number;
-}) {
-  const shellsOut = pickupsOnBoard > 0;
-  if (loaded + reserve === 0) {
-    return (
-      <span className="animate-[buckshot-blink_1s_steps(1)_infinite] whitespace-nowrap font-semibold text-[#E80C0C]">
-        {shellsOut
-          ? "Out of shells — grab one off the board"
-          : "Out of shells — keep moving"}
-      </span>
-    );
+/** The hint line under the shells; what it says (and when) is decided by `ammoHint`. */
+function AmmoHint(input: AmmoHintInput) {
+  const hint = ammoHint(input);
+  if (hint === null) {
+    return null;
   }
-  if (loaded === 0) {
-    return (
-      <span className="animate-[buckshot-blink_1s_steps(1)_infinite] font-semibold text-[#E80C0C]">
-        R — reload
-      </span>
-    );
-  }
-  if (loaded + reserve <= LOW_AMMO) {
-    return (
-      <span className="whitespace-nowrap font-semibold text-[rgba(10,12,14,0.78)]">
-        {shellsOut
-          ? "Shells on the board — walk over them"
-          : "Low — shells drop as you move"}
-      </span>
-    );
-  }
-  return null;
+  return (
+    <span
+      className={
+        hint.urgent
+          ? "animate-[buckshot-blink_1s_steps(1)_infinite] whitespace-nowrap font-semibold text-[#E80C0C]"
+          : "whitespace-nowrap font-semibold text-[rgba(10,12,14,0.78)]"
+      }
+    >
+      {hint.text}
+    </span>
+  );
 }

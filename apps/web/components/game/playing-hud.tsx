@@ -32,6 +32,7 @@ export function PlayingHud({
         reloadProgress={hud.reloadProgress}
         reserve={hud.reserve}
         reserveMax={hud.reserveMax}
+        shellSpawnRate={hud.shellSpawnRate}
       />
       <StatusReadout
         difficultyName={hud.difficultyName}

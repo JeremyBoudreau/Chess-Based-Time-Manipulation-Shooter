@@ -34,7 +34,7 @@ Pick a difficulty on the start screen, or link straight to one with `/play?diffi
 | `Esc` | Pause. |
 
 - **Time stacks.** Moving and turning add together, capped at 1× (1.75× while sprinting). Reloading adds 1× and raises that cap by 0.5×. A reload standing still runs at 1×, walking while reloading at 1.5×, and sprinting while reloading at 2.25×. Standing still, time crawls at 1%.
-- The gun holds **2 shells**, with up to **6 in reserve**. Shells don't regenerate. Single shells drop onto empty squares about every 5 game-seconds, at most 3 at a time and never within 2 squares of you. Walk over one to pick it up. Any piece that moves over a shell crushes it.
+- The gun holds **2 shells**, with up to **6 in reserve**. Shells don't regenerate. Single shells drop onto empty squares about every 5 game-seconds, at most 3 at a time and never within 2 squares of you. When you are down to 0–1 shells they drop twice as often. Walk over one to pick it up. Any piece that moves over a shell crushes it.
 - Pellets travel 5 squares and hit the first occupied **square** they enter. You cannot shoot over a pawn or between two pieces.
 - Red floor tiles show the squares that a shaking piece is about to attack. Don't be standing on one when it acts.
 

@@ -33,7 +33,7 @@ import { getViewer } from "@/lib/session";
 
 const PILLARS = [
   {
-    body: `Two barrels, ${DEFAULT_SHOTGUN.pellets} pellets a shell, a fan of lead that shreds anything adjacent and tickles anything far. Reloading costs time. Spent shells stay spent: fresh shells drop one at a time onto empty squares, and any piece that moves over one crushes it. Every trigger pull is a decision.`,
+    body: `Two barrels, ${DEFAULT_SHOTGUN.pellets} pellets a shell, a fan of lead that shreds anything adjacent and tickles anything far. Reloading costs time. Spent shells stay spent: fresh shells drop one at a time onto empty squares (twice as often when you are nearly dry), and any piece that moves over one crushes it. Every trigger pull is a decision.`,
     credit: "Shotgun King: The Final Checkmate",
     title: "Buckshot vs. bone",
   },

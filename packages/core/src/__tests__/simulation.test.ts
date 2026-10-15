@@ -10,7 +10,12 @@ import { isOnBoard, squareAt, squareCenter } from "../geometry";
 import { mulberry32 } from "../random";
 import { moveTravel, squaresPassed } from "../rules";
 import { EASY_SETUP, squareName } from "../setups";
-import { createSimulation, createWorld, stepWorld } from "../simulation";
+import {
+  createSimulation,
+  createWorld,
+  pickupSpawnRate,
+  stepWorld,
+} from "../simulation";
 import { maxTimeScale, targetTimeScale } from "../time";
 import type { GameEvent, PieceState, Square, WorldState } from "../types";
 import {
@@ -1084,5 +1089,104 @@ describe("invariants", () => {
         },
       });
     }
+  });
+});
+
+describe("low-ammo spawn boost", () => {
+  /** Game-times of every spawn while the king stands still with the given ammo (time at 1x). */
+  const spawnTimes = (loaded: number, reserve: number, seconds: number) => {
+    const world = makeWorld({
+      pickups: {
+        initialPickups: 0,
+        maxOnBoard: 64,
+        spawnInterval: 1,
+        spawnJitter: 0,
+      },
+    });
+    world.player.loaded = loaded;
+    world.player.reserve = reserve;
+    const times: number[] = [];
+    run(
+      world,
+      makeDeps({ decide: waitBrain, targetScale: fullSpeed }),
+      seconds,
+      {
+        until: (current) => {
+          if (current.events.some((event) => event.type === "pickupSpawned")) {
+            times.push(current.gameTime);
+          }
+          return false;
+        },
+      }
+    );
+    return times;
+  };
+
+  test("shells drop twice as often at 0 or 1 shells", () => {
+    for (const [loaded, reserve] of [
+      [0, 0],
+      [1, 0],
+      [0, 1],
+    ] as const) {
+      const times = spawnTimes(loaded, reserve, 3.2);
+      expect(times).toHaveLength(6);
+      let previous = 0;
+      for (const time of times) {
+        expect(time - previous).toBeGreaterThan(0.5 - 1e-9);
+        expect(time - previous).toBeLessThan(0.5 + FRAME + 1e-9);
+        previous = time;
+      }
+    }
+  });
+
+  test("from 2 shells up the normal rate applies", () => {
+    for (const [loaded, reserve] of [
+      [2, 0],
+      [1, 1],
+      [2, 6],
+    ] as const) {
+      expect(spawnTimes(loaded, reserve, 3.2)).toHaveLength(3);
+    }
+  });
+
+  test("the boost reads its threshold and rate from the pickup rules", () => {
+    const world = makeWorld({
+      pickups: { lowAmmoSpawnRate: 3, lowAmmoThreshold: 4 },
+    });
+    world.player.loaded = 2;
+    world.player.reserve = 2;
+    expect(pickupSpawnRate(world)).toBe(3);
+    world.player.reserve = 3;
+    expect(pickupSpawnRate(world)).toBe(1);
+  });
+
+  test("the boost kicks in mid-interval, the moment the ammo drops", () => {
+    const world = makeWorld({
+      pickups: { initialPickups: 0, spawnInterval: 1, spawnJitter: 0 },
+    });
+    const deps = makeDeps({ decide: waitBrain, targetScale: fullSpeed });
+    world.player.loaded = 2;
+    world.player.reserve = 0;
+    run(world, deps, 0.5);
+    expect(world.pickups).toHaveLength(0);
+    // The clock ramps up from idle, so measure how much of the interval actually elapsed.
+    const switchedAt = world.gameTime;
+    const remaining = 1 - switchedAt;
+    world.player.loaded = 1;
+    let spawnedAt = Number.NaN;
+    run(world, deps, 1, {
+      until: (current) => {
+        if (current.events.some((event) => event.type === "pickupSpawned")) {
+          spawnedAt = current.gameTime;
+          return true;
+        }
+        return false;
+      },
+    });
+    // At double rate the remaining interval runs out in half the game-time.
+    const expected = switchedAt + remaining / 2;
+    expect(remaining).toBeGreaterThan(0.25);
+    expect(spawnedAt).toBeGreaterThan(expected - 1e-9);
+    expect(spawnedAt).toBeLessThan(expected + 2 * FRAME);
   });
 });

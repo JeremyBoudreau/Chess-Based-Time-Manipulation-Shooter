@@ -30,11 +30,15 @@ const FULL_CLEAR: KillCounts = {
   rook: 1,
 };
 
-/** Shortest possible gap between two pickup spawn attempts, in game-ms. */
-const MIN_SPAWN_GAP_MS =
+/** Shortest gap between two pickup spawn attempts at the normal rate, in game-ms. */
+const NORMAL_SPAWN_GAP_MS =
   DEFAULT_PICKUPS.spawnInterval *
   (1 - DEFAULT_PICKUPS.spawnJitter) *
   MS_PER_SECOND;
+
+/** Shortest possible gap: the spawn clock runs faster while the king holds 0–1 shells. */
+const MIN_SPAWN_GAP_MS =
+  NORMAL_SPAWN_GAP_MS / Math.max(1, DEFAULT_PICKUPS.lowAmmoSpawnRate);
 
 /**
  * The documented shell budget, restated independently of the implementation: both barrels, the
@@ -153,6 +157,21 @@ describe("findImplausibility: pickup shell bound", () => {
     expect(findImplausibility(firing(budget + 1, gameTimeMs))).toBe(
       "more shells than the board could supply"
     );
+  });
+
+  test("a run spent nearly dry may collect at the boosted rate", () => {
+    // What the board could supply at the normal rate only; the low-ammo boost allows more.
+    const normalRateBudget =
+      DEFAULT_SHOTGUN.capacity +
+      DEFAULT_SHOTGUN.reserveStart +
+      DEFAULT_PICKUPS.shellsPerPickup *
+        (DEFAULT_PICKUPS.initialPickups +
+          1 +
+          Math.floor(gameTimeMs / NORMAL_SPAWN_GAP_MS));
+    expect(budget).toBeGreaterThan(normalRateBudget);
+    expect(
+      findImplausibility(firing(normalRateBudget + 1, gameTimeMs))
+    ).toBeNull();
   });
 
   test("idling in real time spawns no extra pickups", () => {

@@ -87,7 +87,8 @@ export function StartOverlay({
         <p className="-mt-3 max-w-md text-[13px] text-[rgba(10,12,14,0.62)] leading-relaxed">
           Shells don't regenerate: single shells drop on empty squares —{" "}
           <span className="font-semibold text-[#0A0C0E]">walk over them</span>{" "}
-          before a piece crushes them.
+          before a piece crushes them. Down to your last shell, they drop twice
+          as fast.
         </p>
         {resumed ? null : (
           <DifficultyPicker

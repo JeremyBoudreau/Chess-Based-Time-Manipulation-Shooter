@@ -20,13 +20,22 @@ const UNPROMOTED_KINDS = ["rook", "bishop", "knight", "king"] as const;
 /**
  * Most shells a run could ever have loaded within `gameTimeCeilingMs` of game-time: the two
  * barrels, the starting reserve, and every pickup the board could have dropped. Spawn attempts
- * are never closer together than the jittered minimum interval; the extra pickup covers a first
- * attempt that lands early. Collecting a box can add fewer shells than it holds, never more.
+ * are never closer together than the jittered minimum interval — halved (by `lowAmmoSpawnRate`)
+ * because a player hovering at 0–1 shells runs the spawn clock faster, which must stay legal; the
+ * extra pickup covers a first attempt that lands early. Collecting a box can add fewer shells than
+ * it holds, never more.
  */
 const maxShellSupply = (gameTimeCeilingMs: number): number => {
-  const { initialPickups, shellsPerPickup, spawnInterval, spawnJitter } =
-    DEFAULT_PICKUPS;
-  const minSpawnGapMs = spawnInterval * (1 - spawnJitter) * MS_PER_SECOND;
+  const {
+    initialPickups,
+    lowAmmoSpawnRate,
+    shellsPerPickup,
+    spawnInterval,
+    spawnJitter,
+  } = DEFAULT_PICKUPS;
+  const minSpawnGapMs =
+    (spawnInterval * (1 - spawnJitter) * MS_PER_SECOND) /
+    Math.max(1, lowAmmoSpawnRate);
   const spawnedPickups =
     initialPickups + 1 + Math.floor(gameTimeCeilingMs / minSpawnGapMs);
   return (

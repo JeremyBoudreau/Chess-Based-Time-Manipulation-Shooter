@@ -91,10 +91,13 @@ export const DEFAULT_PLAYER: PlayerStats = {
 /**
  * Shells no longer regenerate: single shells drop onto empty squares every ~5 game-seconds (max 3 on
  * the board, never within 2 squares of the king), so restocking means walking into the open — and
- * a piece that moves over a shell crushes it.
+ * a piece that moves over a shell crushes it. Down to 0–1 shells, they drop twice as often, so a
+ * dry gun is a scramble rather than a death sentence.
  */
 export const DEFAULT_PICKUPS: PickupRules = {
   initialPickups: 2,
+  lowAmmoSpawnRate: 2,
+  lowAmmoThreshold: 1,
   maxOnBoard: 3,
   minSpawnDistance: 2,
   shellsPerPickup: 1,

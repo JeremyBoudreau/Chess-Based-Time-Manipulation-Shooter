@@ -3,6 +3,7 @@ import {
   type GameStatus,
   PIECE_KINDS,
   type PieceKind,
+  pickupSpawnRate,
   type RunResult,
   squareAt,
   squareKey,
@@ -46,6 +47,12 @@ export interface HudSnapshot {
   readonly reloadProgress: number | null;
   readonly reserve: number;
   readonly reserveMax: number;
+  /**
+   * How fast shells drop onto the board, straight from core's `pickupSpawnRate`: 1 normally, above
+   * 1 while the king is nearly dry (the low-ammo boost). A rate rather than a flag so the HUD can
+   * say "2×" without keeping its own copy of the threshold or the factor. Rounded to 0.01.
+   */
+  readonly shellSpawnRate: number;
   /** Shift held while actually moving: time is running faster than real time. */
   readonly sprinting: boolean;
   readonly status: GameStatus;
@@ -72,6 +79,7 @@ export const INITIAL_HUD_SNAPSHOT: HudSnapshot = {
   reloadProgress: null,
   reserve: 0,
   reserveMax: 0,
+  shellSpawnRate: 1,
   sprinting: false,
   status: "playing",
   timeScale: 0,
@@ -184,6 +192,7 @@ const computeSnapshot = (
       : null,
     reserve: player.reserve,
     reserveMax: shotgun.reserveMax,
+    shellSpawnRate: roundTo(pickupSpawnRate(world), 2),
     sprinting: playing && player.sprinting,
     status: world.status,
     timeScale: roundTo(world.timeScale, 2),

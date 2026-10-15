@@ -831,8 +831,20 @@ const updatePieces = (
 };
 
 /**
- * Ages the boxes and runs the spawn clock in game time. The clock restarts on every attempt, even
- * when the board is full, so a collected box is never replaced the instant it is picked up.
+ * How fast the pickup spawn clock runs: normally 1, `lowAmmoSpawnRate` while the king holds
+ * `lowAmmoThreshold` shells or fewer (loaded + reserve). Scaling the clock rather than the next
+ * interval means the boost kicks in (and out) mid-interval, the moment the ammo count changes.
+ */
+export const pickupSpawnRate = (world: WorldState): number => {
+  const { lowAmmoSpawnRate, lowAmmoThreshold } = world.config.pickups;
+  const shells = world.player.loaded + world.player.reserve;
+  return shells <= lowAmmoThreshold ? Math.max(1, lowAmmoSpawnRate) : 1;
+};
+
+/**
+ * Ages the boxes and runs the spawn clock in game time (faster when the king is nearly out of
+ * shells). The clock restarts on every attempt, even when the board is full, so a collected box is
+ * never replaced the instant it is picked up.
  */
 const updatePickups = (
   world: WorldState,
@@ -842,7 +854,7 @@ const updatePickups = (
   for (const pickup of world.pickups) {
     pickup.age += gameDt;
   }
-  world.pickupTimer -= gameDt;
+  world.pickupTimer -= gameDt * pickupSpawnRate(world);
   if (world.pickupTimer > 0) {
     return;
   }

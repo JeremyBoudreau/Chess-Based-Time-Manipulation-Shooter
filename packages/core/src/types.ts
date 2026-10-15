@@ -270,6 +270,10 @@ export interface PlayerStats {
 export interface PickupRules {
   /** Pickups already on the board when the game starts. */
   readonly initialPickups: number;
+  /** How much faster the spawn clock runs while the king is that low (2 = twice the rate). */
+  readonly lowAmmoSpawnRate: number;
+  /** At or below this many shells (loaded + reserve) the spawn clock speeds up. */
+  readonly lowAmmoThreshold: number;
   /** Never more than this many pickups on the board at once. */
   readonly maxOnBoard: number;
   /** Minimum Chebyshev distance (in squares) from the king's square for a new pickup. */
