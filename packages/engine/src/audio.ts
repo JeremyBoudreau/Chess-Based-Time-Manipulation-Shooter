@@ -1,12 +1,15 @@
 import {
   clamp,
   type GameEvent,
+  maxTimeScale,
   type PieceState,
   right,
   type Square,
   squareCenter,
   type WorldState,
 } from "@buckshot/core";
+import { easeInOutCubic } from "./scene/coords";
+import { CONTACT_DISTANCE, DROP_HEIGHT, GRAVITY } from "./scene/pickups";
 
 /** Low-pass cutoff of the world bus while time is (almost) frozen. */
 const FROZEN_CUTOFF_HZ = 500;
@@ -20,6 +23,16 @@ const MUTE_TIME_CONSTANT = 0.05;
 const AMBIENT_FROZEN_GAIN = 0.018;
 const AMBIENT_FLOWING_GAIN = 0.07;
 const AMBIENT_TIME_CONSTANT = 0.12;
+/**
+ * Past real speed (sprinting) the low-pass is already wide open, so the overdrive is heard as an
+ * airy rush instead: a band of noise that fades in as time climbs from 1× to `maxTimeScale` (a sprint
+ * during a reload).
+ */
+const RUSH_MAX_GAIN = 0.045;
+const RUSH_CENTRE_HZ = 2400;
+const RUSH_TIME_CONSTANT = 0.18;
+/** Skip rush automation unless its gain moved by more than this (absolute). */
+const RUSH_EPSILON = 0.001;
 const NOISE_SECONDS = 2;
 /** Envelopes ramp from/to this instead of 0 because exponential ramps cannot reach zero. */
 const SILENCE = 0.0001;
@@ -29,6 +42,18 @@ const VOICE_TAIL = 0.15;
 const HALF_VOLUME_DISTANCE = 4;
 const MAX_PAN = 0.8;
 const ATTACK_LOUDNESS = 1.8;
+/**
+ * Shared with the pickup layer so pickup sounds play when the shell is *seen* to land or break, not
+ * when the sim decides it: it drops in on game time, and a crushing piece meets it
+ * CONTACT_DISTANCE board units before its centre along the piece's path.
+ */
+const BOX_FALL_TIME = Math.sqrt((2 * DROP_HEIGHT) / GRAVITY);
+
+/** A box the sim has already removed, whose crunch waits for the crushing piece's model. */
+interface PendingCrush {
+  readonly pieceId: string;
+  readonly square: Square;
+}
 
 interface ToneOptions {
   readonly attack: number;
@@ -61,6 +86,9 @@ interface AudioGraph {
   readonly master: GainNode;
   readonly noise: AudioBuffer;
   readonly noiseBed: AudioBufferSourceNode;
+  /** Sprint overdrive bed: silent up to 1× time, audible only while time outruns real time. */
+  readonly rush: GainNode;
+  readonly rushBed: AudioBufferSourceNode;
   readonly timeFilter: BiquadFilterNode;
   /** World sounds (pieces, ambience): muffled by `timeFilter` when time is frozen. */
   readonly world: GainNode;
@@ -76,6 +104,7 @@ const random = (min: number, max: number): number =>
  * The SUPERHOT cue is the time filter: world sounds and an ambient bed pass through a low-pass
  * whose cutoff (and the bed's gain) follow `world.timeScale`, so standing still literally muffles
  * the world. The player's own gun bypasses it: your actions are always crisp, the world is not.
+ * Sprinting pushes time past 1×; the filter simply stays open and a faint rush bed takes over.
  *
  * The AudioContext is created lazily on the first user gesture because browsers refuse to start
  * audio before one.
@@ -86,8 +115,14 @@ export class GameAudio {
   private paused: boolean;
   private playing: boolean;
   private lastCutoff = OPEN_CUTOFF_HZ;
+  private lastRush = 0;
   private disposed: boolean;
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
+  /** Boxes first seen still dropping in; each thuds once, when its game-time fall ends. */
+  private readonly falling = new Set<number>();
+  /** Pickup ids below this have been seen already (the sim hands them out in increasing order). */
+  private nextPickupId = 0;
+  private readonly pendingCrushes: PendingCrush[] = [];
 
   constructor() {
     this.muted = false;
@@ -144,7 +179,16 @@ export class GameAudio {
     for (const event of world.events) {
       this.play(graph, world, event);
     }
-    this.followTime(graph, world.timeScale);
+    this.landBoxes(graph, world);
+    this.crushBoxes(graph, world);
+    this.followTime(graph, world.timeScale, maxTimeScale(world.config.time));
+  }
+
+  /** Forget the run's boxes (pickup ids restart with a new world). Call when the game restarts. */
+  reset(): void {
+    this.falling.clear();
+    this.nextPickupId = 0;
+    this.pendingCrushes.length = 0;
   }
 
   dispose(): void {
@@ -181,8 +225,18 @@ export class GameAudio {
     graph.master.gain.setTargetAtTime(target, now, timeConstant);
   }
 
-  private followTime(graph: AudioGraph, timeScale: number): void {
+  /**
+   * Map the time scale onto the world bus. The filter and the ambient bed saturate at 1× (fully
+   * open, fully flowing); anything above that, up to `topScale`, only drives the rush bed.
+   */
+  private followTime(
+    graph: AudioGraph,
+    timeScale: number,
+    topScale: number
+  ): void {
     const scale = clamp(timeScale, 0, 1);
+    const overdrive =
+      topScale > 1 ? clamp((timeScale - 1) / (topScale - 1), 0, 1) : 0;
     const now = graph.ctx.currentTime;
     const cutoff =
       FROZEN_CUTOFF_HZ * (OPEN_CUTOFF_HZ / FROZEN_CUTOFF_HZ) ** scale;
@@ -200,6 +254,51 @@ export class GameAudio {
         (AMBIENT_FLOWING_GAIN - AMBIENT_FROZEN_GAIN) * scale
       : 0;
     graph.ambient.gain.setTargetAtTime(ambient, now, AMBIENT_TIME_CONSTANT);
+    const rush = audible ? RUSH_MAX_GAIN * overdrive * overdrive : 0;
+    const settledToSilence = rush === 0 && this.lastRush !== 0;
+    if (Math.abs(rush - this.lastRush) > RUSH_EPSILON || settledToSilence) {
+      graph.rush.gain.setTargetAtTime(rush, now, RUSH_TIME_CONSTANT);
+      this.lastRush = rush;
+    }
+  }
+
+  /**
+   * Thud each box as it hits the board. A box spawns at the top of a game-time drop, so at the 1%
+   * idle creep it can hang in the air for most of a minute; the sound waits for the impact. A box
+   * first seen already down (it landed before audio unlocked) stays silent.
+   */
+  private landBoxes(graph: AudioGraph, world: WorldState): void {
+    for (const pickup of world.pickups) {
+      if (pickup.id >= this.nextPickupId) {
+        this.nextPickupId = pickup.id + 1;
+        if (pickup.age < BOX_FALL_TIME) {
+          this.falling.add(pickup.id);
+        }
+      } else if (this.falling.has(pickup.id) && pickup.age >= BOX_FALL_TIME) {
+        this.falling.delete(pickup.id);
+        this.pickupLanded(graph, world, pickup.square);
+      }
+    }
+    // Collected or crushed in mid-air: it never lands.
+    for (const id of this.falling) {
+      if (!world.pickups.some((pickup) => pickup.id === id)) {
+        this.falling.delete(id);
+      }
+    }
+  }
+
+  /** Crunch each crushed box once the crushing piece's model reaches it (see `crusherArrived`). */
+  private crushBoxes(graph: AudioGraph, world: WorldState): void {
+    let kept = 0;
+    for (const crush of this.pendingCrushes) {
+      if (crusherArrived(world, crush)) {
+        this.pickupCrushed(graph, world, crush.square);
+      } else {
+        this.pendingCrushes[kept] = crush;
+        kept += 1;
+      }
+    }
+    this.pendingCrushes.length = kept;
   }
 
   private play(graph: AudioGraph, world: WorldState, event: GameEvent): void {
@@ -216,8 +315,16 @@ export class GameAudio {
       case "reloadEnd":
         this.snapShut(graph, graph.ctx.currentTime);
         break;
-      case "shellRegenerated":
-        this.shellTick(graph);
+      // A spawn is silent: the box is still at the top of its drop (see `landBoxes`).
+      case "pickupCollected":
+        this.pickupCollected(graph, event.shells);
+        break;
+      case "pickupCrushed":
+        // The sim crushes at the start of the move; the crunch waits for the model (`crushBoxes`).
+        this.pendingCrushes.push({
+          pieceId: event.pieceId,
+          square: event.square,
+        });
         break;
       case "pieceTelegraph":
         this.telegraph(graph, world, event.pieceId);
@@ -379,20 +486,40 @@ export class GameAudio {
     });
   }
 
-  private shellTick(graph: AudioGraph): void {
+  /**
+   * Scooping up a box: one hollow clack per shell that went into the reserve (normally two), then a
+   * bright tick. On the direct bus — it is the player's action, so it must read crisply even when
+   * the pickup happens at a near-frozen 1% time scale.
+   */
+  private pickupCollected(graph: AudioGraph, shells: number): void {
     const t = graph.ctx.currentTime;
-    this.tone(graph, graph.direct, t, {
+    const clacks = clamp(Math.round(shells), 1, 3);
+    for (let index = 0; index < clacks; index += 1) {
+      const at = t + index * 0.065;
+      const pitch = random(0.95, 1.05) * (1 + index * 0.08);
+      this.click(graph, at, 1800 * pitch, 0.32);
+      this.tone(graph, graph.direct, at, {
+        attack: 0.001,
+        decay: 0.055,
+        endFreq: 210 * pitch,
+        freq: 320 * pitch,
+        peak: 0.16,
+        type: "triangle",
+      });
+    }
+    const tick = t + clacks * 0.065 + 0.02;
+    this.tone(graph, graph.direct, tick, {
       attack: 0.002,
-      decay: 0.07,
-      freq: 1320,
-      peak: 0.07,
+      decay: 0.09,
+      freq: 1568,
+      peak: 0.09,
       type: "sine",
     });
-    this.tone(graph, graph.direct, t + 0.01, {
+    this.tone(graph, graph.direct, tick + 0.012, {
       attack: 0.002,
-      decay: 0.05,
-      freq: 1980,
-      peak: 0.03,
+      decay: 0.07,
+      freq: 2349,
+      peak: 0.045,
       type: "sine",
     });
   }
@@ -559,6 +686,72 @@ export class GameAudio {
     }
   }
 
+  /**
+   * A box hitting the board at the end of its drop: a soft cardboard thud and a small tick,
+   * deliberately quiet (spawns are frequent) but panned, so you can tell roughly where to look.
+   */
+  private pickupLanded(graph: AudioGraph, world: WorldState, square: Square) {
+    const out = this.spatial(graph, world, square, 0.55, 0.25);
+    const t = graph.ctx.currentTime;
+    this.tone(graph, out, t, {
+      attack: 0.003,
+      decay: 0.12,
+      endFreq: 62,
+      freq: 135,
+      peak: 0.32,
+      type: "sine",
+    });
+    this.noise(graph, out, t, {
+      attack: 0.002,
+      decay: 0.06,
+      endFreq: 260,
+      filter: "lowpass",
+      freq: 900,
+      peak: 0.2,
+    });
+    this.tone(graph, out, t + 0.06, {
+      attack: 0.001,
+      decay: 0.04,
+      freq: 2100,
+      peak: 0.045,
+      type: "triangle",
+    });
+  }
+
+  /** A piece moving over a box: a short gritty crunch of cardboard and brass. */
+  private pickupCrushed(graph: AudioGraph, world: WorldState, square: Square) {
+    const out = this.spatial(graph, world, square, 1, 0.2);
+    const t = graph.ctx.currentTime;
+    this.noise(graph, out, t, {
+      attack: 0.001,
+      decay: 0.1,
+      endFreq: 380,
+      filter: "bandpass",
+      freq: 1300,
+      peak: 0.42,
+      q: 1.2,
+    });
+    this.tone(graph, out, t, {
+      attack: 0.001,
+      decay: 0.08,
+      endFreq: 48,
+      freq: 105,
+      peak: 0.22,
+      type: "sine",
+    });
+    const grains = 3 + Math.floor(Math.random() * 3);
+    for (let index = 0; index < grains; index += 1) {
+      this.noise(graph, out, t + random(0, 0.07), {
+        attack: 0.001,
+        decay: random(0.008, 0.02),
+        filter: "bandpass",
+        freq: random(1800, 4800),
+        peak: random(0.14, 0.26),
+        q: 4,
+      });
+    }
+  }
+
   private promoted(graph: AudioGraph, world: WorldState, pieceId: string) {
     const piece = findPiece(world, pieceId);
     const out = this.spatial(graph, world, piece?.square ?? null, 1, 0.5);
@@ -695,6 +888,35 @@ export class GameAudio {
 const findPiece = (world: WorldState, id: string): PieceState | undefined =>
   world.pieces.find((piece) => piece.id === id);
 
+/**
+ * Mirrors the pickup layer's `crusherArrived` so the crunch and the visible shatter coincide. The
+ * sim removes a box the instant a move starts, but the model glides there on game time (eased as
+ * in piece-view), so wait until its drawn base is within contact distance of the box along the
+ * path, or the move is over (arrived, killed mid-slide). A lethal lunge only happens once the game
+ * is lost, when the layer crushes at once, so its easing never matters here.
+ */
+const crusherArrived = (world: WorldState, crush: PendingCrush): boolean => {
+  if (world.status !== "playing") {
+    return true;
+  }
+  const piece = findPiece(world, crush.pieceId);
+  if (piece?.phase !== "moving") {
+    return true;
+  }
+  const from = squareCenter(piece.fromSquare);
+  const to = squareCenter(piece.square);
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 1e-3) {
+    return true;
+  }
+  const box = squareCenter(crush.square);
+  const boxAlong = ((box.x - from.x) * dx + (box.y - from.y) * dy) / length;
+  const drawnAlong = easeInOutCubic(clamp(piece.moveProgress, 0, 1)) * length;
+  return drawnAlong >= boxAlong - CONTACT_DISTANCE;
+};
+
 const envelope = (
   param: AudioParam,
   t: number,
@@ -720,7 +942,8 @@ const createNoiseBuffer = (ctx: AudioContext): AudioBuffer => {
 /**
  * direct ─────────────────────────────┐
  * world ──┐                           ├─ master (mute) ─ compressor ─ speakers
- * ambient ┴─ timeFilter (follows time)┘
+ * ambient ┼─ timeFilter (follows time)┘
+ * rush ───┘  (sprint overdrive only)
  */
 const createGraph = (): AudioGraph => {
   const ctx = new AudioContext({ latencyHint: "interactive" });
@@ -765,6 +988,21 @@ const createGraph = (): AudioGraph => {
   noiseBed.connect(bedFilter);
   noiseBed.start();
 
+  // Its own looping source, started half a buffer in, so it never correlates with the bed above.
+  const rush = ctx.createGain();
+  rush.gain.value = 0;
+  rush.connect(timeFilter);
+  const rushFilter = ctx.createBiquadFilter();
+  rushFilter.type = "bandpass";
+  rushFilter.frequency.value = RUSH_CENTRE_HZ;
+  rushFilter.Q.value = 0.45;
+  rushFilter.connect(rush);
+  const rushBed = ctx.createBufferSource();
+  rushBed.buffer = noise;
+  rushBed.loop = true;
+  rushBed.connect(rushFilter);
+  rushBed.start(0, NOISE_SECONDS / 2);
+
   const droneGain = ctx.createGain();
   droneGain.gain.value = 0.35;
   droneGain.connect(ambient);
@@ -790,6 +1028,8 @@ const createGraph = (): AudioGraph => {
     master,
     noise,
     noiseBed,
+    rush,
+    rushBed,
     timeFilter,
     world,
   };

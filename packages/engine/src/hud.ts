@@ -29,18 +29,20 @@ export interface HudSnapshot {
   readonly muted: boolean;
   /** Pointer not locked while the game is still being played. */
   readonly paused: boolean;
+  /** Shell boxes lying on the board (the only way to refill the reserve). */
+  readonly pickupsOnBoard: number;
   /** Living white pieces. */
   readonly piecesLeft: number;
   /** The king stands on a square a telegraphing piece will hit when it acts: move! */
   readonly playerThreatened: boolean;
-  /** Progress of the next reserve shell, 0..1 (0 while the reserve is full). */
-  readonly regenProgress: number;
   /** Reload progress 0..1, or null when not reloading. */
   readonly reloadProgress: number | null;
   readonly reserve: number;
   readonly reserveMax: number;
+  /** Shift held while actually moving: time is running faster than real time. */
+  readonly sprinting: boolean;
   readonly status: GameStatus;
-  /** World time scale rounded to 0.01. */
+  /** World time scale rounded to 0.01 (above 1 while sprinting). */
   readonly timeScale: number;
   readonly whiteKingHp: number | null;
   readonly whiteKingMaxHp: number | null;
@@ -56,12 +58,13 @@ export const INITIAL_HUD_SNAPSHOT: HudSnapshot = {
   loaded: 2,
   muted: false,
   paused: true,
+  pickupsOnBoard: 0,
   piecesLeft: 0,
   playerThreatened: false,
-  regenProgress: 0,
   reloadProgress: null,
   reserve: 0,
   reserveMax: 0,
+  sprinting: false,
   status: "playing",
   timeScale: 0,
   whiteKingHp: null,
@@ -147,10 +150,6 @@ const computeSnapshot = (
   const reloading = player.reloadTimer > 0;
   const king = world.pieces.find((piece) => piece.kind === "king");
   const kingAlive = king !== undefined && king.phase !== "dead";
-  const regenerating = player.reserve < shotgun.reserveMax;
-  const regenProgress = regenerating
-    ? 1 - player.regenTimer / shotgun.reserveRegenInterval
-    : 0;
   return {
     capacity: shotgun.capacity,
     fireReady:
@@ -166,9 +165,9 @@ const computeSnapshot = (
     loaded: player.loaded,
     muted: extras.muted,
     paused: extras.paused,
+    pickupsOnBoard: world.pickups.length,
     piecesLeft: world.pieces.filter((piece) => piece.phase !== "dead").length,
     playerThreatened: playing && isPlayerThreatened(world),
-    regenProgress: quantise(regenProgress, PROGRESS_STEPS),
     reloadProgress: reloading
       ? quantise(
           1 - player.reloadTimer / shotgun.reloadDuration,
@@ -177,6 +176,7 @@ const computeSnapshot = (
       : null,
     reserve: player.reserve,
     reserveMax: shotgun.reserveMax,
+    sprinting: playing && player.sprinting,
     status: world.status,
     timeScale: roundTo(world.timeScale, 2),
     whiteKingHp: king ? Math.max(0, kingAlive ? king.hp : 0) : null,

@@ -3,6 +3,7 @@ import Link from "next/link";
 
 const CONTROLS = [
   { action: "move", keys: "WASD" },
+  { action: "sprint", keys: "Shift" },
   { action: "aim", keys: "Mouse" },
   { action: "fire", keys: "Click" },
   { action: "reload", keys: "R" },
@@ -64,6 +65,11 @@ export function StartOverlay({
             </li>
           ))}
         </ul>
+        <p className="-mt-3 max-w-md text-[13px] text-[rgba(10,12,14,0.62)] leading-relaxed">
+          Shells don't regenerate: single shells drop on empty squares —{" "}
+          <span className="font-semibold text-[#0A0C0E]">walk over them</span>{" "}
+          before a piece crushes them.
+        </p>
         <Button
           className="h-14 rounded-none bg-[#E80C0C] px-12 font-black text-base text-white uppercase tracking-[0.35em] shadow-[0_10px_30px_rgba(232,12,12,0.35)] hover:bg-[#C70A0A]"
           disabled={loading}

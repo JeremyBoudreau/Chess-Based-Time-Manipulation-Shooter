@@ -56,33 +56,27 @@ function ShellIcon({ full }: { readonly full: boolean }) {
   );
 }
 
-/** A reserve pip; the one currently regenerating fills bottom-to-top. */
-function ReservePip({ fill }: { readonly fill: number }) {
+/** A reserve pip: solid red when the shell is there, a hollow slot when it is not. */
+function ReservePip({ full }: { readonly full: boolean }) {
   return (
     <span
-      className="relative block h-5 w-2 overflow-hidden rounded-[2px] border"
+      className="block h-5 w-2 rounded-[2px] border transition-colors duration-150"
       style={{
-        backgroundColor: "rgba(255, 255, 255, 0.25)",
-        borderColor: fill >= 1 ? SHELL_RED : "rgba(10, 12, 14, 0.4)",
+        backgroundColor: full ? SHELL_RED : "rgba(255, 255, 255, 0.25)",
+        borderColor: full ? SHELL_RED : "rgba(10, 12, 14, 0.4)",
       }}
-    >
-      <span
-        className="absolute inset-x-0 bottom-0 block"
-        style={{
-          backgroundColor: SHELL_RED,
-          height: `${Math.round(fill * 100)}%`,
-          opacity: fill >= 1 ? 1 : 0.7,
-          transition: "height 120ms linear",
-        }}
-      />
-    </span>
+    />
   );
 }
+
+/** Loaded + reserve at or below this and the HUD starts pointing at the shells on the board. */
+const LOW_AMMO = 2;
 
 export interface AmmoDisplayProps {
   readonly capacity: number;
   readonly loaded: number;
-  readonly regenProgress: number;
+  /** Shells lying on the board right now. */
+  readonly pickupsOnBoard: number;
   readonly reloadProgress: number | null;
   readonly reserve: number;
   readonly reserveMax: number;
@@ -90,24 +84,18 @@ export interface AmmoDisplayProps {
 
 /**
  * Shotgun King-style ammo readout, bottom-left: the two barrels as big shells, the reserve as a
- * row of pips (the next one fills as it regenerates — which, like everything, only happens while
- * you move), plus a reload sweep and an "R — reload" nudge when both barrels are empty.
+ * row of pips, plus a reload sweep and a hint line. Shells never come back on their own (they
+ * have to be picked up off the board), so the hint's job is to send a low player out to get them.
  */
 export function AmmoDisplay({
   capacity,
   loaded,
-  regenProgress,
+  pickupsOnBoard,
   reloadProgress,
   reserve,
   reserveMax,
 }: AmmoDisplayProps) {
   const reloading = reloadProgress !== null;
-  const pipFill = (pip: number): number => {
-    if (pip < reserve) {
-      return 1;
-    }
-    return pip === reserve ? regenProgress : 0;
-  };
   return (
     <div className="buckshot-motion pointer-events-none absolute bottom-6 left-6 flex select-none flex-col gap-2">
       <div className="flex items-end gap-1.5">
@@ -117,7 +105,7 @@ export function AmmoDisplay({
       </div>
       <div className="flex gap-1">
         {range(reserveMax).map((pip) => (
-          <ReservePip fill={pipFill(pip)} key={`pip-${pip}`} />
+          <ReservePip full={pip < reserve} key={`pip-${pip}`} />
         ))}
       </div>
       <div className="h-5 font-mono text-[11px] uppercase tracking-[0.3em]">
@@ -143,29 +131,56 @@ export function AmmoDisplay({
             </span>
           </div>
         ) : (
-          <AmmoHint loaded={loaded} reserve={reserve} />
+          <AmmoHint
+            loaded={loaded}
+            pickupsOnBoard={pickupsOnBoard}
+            reserve={reserve}
+          />
         )}
       </div>
     </div>
   );
 }
 
+/**
+ * One line, most urgent first: totally dry → go get a shell; barrels empty → reload; running low →
+ * the board has more. With no shell on the board yet, it says to keep moving instead (shells drop
+ * on a game-time timer, and game time barely passes unless you move).
+ */
 function AmmoHint({
   loaded,
+  pickupsOnBoard,
   reserve,
 }: {
   readonly loaded: number;
+  readonly pickupsOnBoard: number;
   readonly reserve: number;
 }) {
-  if (loaded > 0) {
-    return null;
+  const shellsOut = pickupsOnBoard > 0;
+  if (loaded + reserve === 0) {
+    return (
+      <span className="animate-[buckshot-blink_1s_steps(1)_infinite] whitespace-nowrap font-semibold text-[#E80C0C]">
+        {shellsOut
+          ? "Out of shells — grab one off the board"
+          : "Out of shells — keep moving"}
+      </span>
+    );
   }
-  if (reserve === 0) {
-    return <span className="text-[rgba(10,12,14,0.7)]">Out — keep moving</span>;
+  if (loaded === 0) {
+    return (
+      <span className="animate-[buckshot-blink_1s_steps(1)_infinite] font-semibold text-[#E80C0C]">
+        R — reload
+      </span>
+    );
   }
-  return (
-    <span className="animate-[buckshot-blink_1s_steps(1)_infinite] font-semibold text-[#E80C0C]">
-      R — reload
-    </span>
-  );
+  if (loaded + reserve <= LOW_AMMO) {
+    return (
+      <span className="whitespace-nowrap font-semibold text-[rgba(10,12,14,0.78)]">
+        {shellsOut
+          ? "Shells on the board — walk over them"
+          : "Low — shells drop as you move"}
+      </span>
+    );
+  }
+  return null;
 }

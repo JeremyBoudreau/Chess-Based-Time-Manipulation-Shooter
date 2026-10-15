@@ -28,7 +28,7 @@ export function PlayingHud({
       <AmmoDisplay
         capacity={hud.capacity}
         loaded={hud.loaded}
-        regenProgress={hud.regenProgress}
+        pickupsOnBoard={hud.pickupsOnBoard}
         reloadProgress={hud.reloadProgress}
         reserve={hud.reserve}
         reserveMax={hud.reserveMax}
@@ -36,6 +36,7 @@ export function PlayingHud({
       <StatusReadout
         gameTime={hud.gameTime}
         muted={hud.muted}
+        sprinting={hud.sprinting}
         timeScale={hud.timeScale}
         whiteKingHp={hud.whiteKingHp}
         whiteKingMaxHp={hud.whiteKingMaxHp}

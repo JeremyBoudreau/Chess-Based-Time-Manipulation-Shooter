@@ -16,6 +16,13 @@ const FORWARD_KEYS = new Set(["KeyW", "ArrowUp"]);
 const BACK_KEYS = new Set(["KeyS", "ArrowDown"]);
 const LEFT_KEYS = new Set(["KeyA", "ArrowLeft"]);
 const RIGHT_KEYS = new Set(["KeyD", "ArrowRight"]);
+/** Either Shift sprints, so left- and right-handed layouts both work. */
+const SPRINT_KEYS = new Set(["ShiftLeft", "ShiftRight"]);
+/**
+ * Stands in for "some Shift is down" when an event's modifier flag reports a Shift we never saw
+ * go down: it was already held when the pointer locked, and its auto-repeats are ignored.
+ */
+const ADOPTED_SHIFT = "ShiftLeft";
 /** Keys whose browser default (page scroll) must be suppressed while playing. */
 const GAME_KEYS = new Set([
   ...FORWARD_KEYS,
@@ -143,6 +150,7 @@ export class InputController {
       moveX: moveX * moveScale,
       moveY: moveY * moveScale,
       reload: this.reloadPressed,
+      sprint: this.anyHeld(SPRINT_KEYS),
     };
     this.clearFrame();
     return input;
@@ -187,6 +195,24 @@ export class InputController {
     return false;
   }
 
+  /**
+   * Reconcile the sprint keys with the Shift flag every input event carries. The flag is the OS's
+   * own view of the modifier, so it un-sticks a sprint whose keyup went to an OS shortcut instead
+   * of the page, and it picks up a Shift that was already held when the pointer locked. Adopting
+   * one that way is safe even right after a resume: sprint does nothing until the king walks.
+   */
+  private syncShift(shiftDown: boolean): void {
+    if (!shiftDown) {
+      for (const code of SPRINT_KEYS) {
+        this.held.delete(code);
+      }
+      return;
+    }
+    if (!this.anyHeld(SPRINT_KEYS)) {
+      this.held.add(ADOPTED_SHIFT);
+    }
+  }
+
   private clearFrame(): void {
     this.dx = 0;
     this.dy = 0;
@@ -223,12 +249,17 @@ export class InputController {
     if (!this.locked) {
       return;
     }
+    this.syncShift(event.shiftKey);
     this.dx += clampDelta(event.movementX);
     this.dy += clampDelta(event.movementY);
   };
 
   private readonly handleMouseDown = (event: MouseEvent): void => {
-    if (this.locked && event.button === PRIMARY_BUTTON) {
+    if (!this.locked) {
+      return;
+    }
+    this.syncShift(event.shiftKey);
+    if (event.button === PRIMARY_BUTTON) {
       this.firePressed = true;
     }
   };
@@ -237,10 +268,14 @@ export class InputController {
     if (this.locked && GAME_KEYS.has(event.code)) {
       event.preventDefault();
     }
-    if (event.repeat) {
+    if (isTypingTarget(event.target)) {
       return;
     }
-    if (isTypingTarget(event.target)) {
+    if (this.locked) {
+      // Before the repeat check: a Shift held through a resume only ever sends repeats.
+      this.syncShift(event.shiftKey);
+    }
+    if (event.repeat) {
       return;
     }
     if (this.locked) {
@@ -256,6 +291,9 @@ export class InputController {
 
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
     this.held.delete(event.code);
+    if (this.locked) {
+      this.syncShift(event.shiftKey);
+    }
   };
 
   private readonly handleBlur = (): void => {

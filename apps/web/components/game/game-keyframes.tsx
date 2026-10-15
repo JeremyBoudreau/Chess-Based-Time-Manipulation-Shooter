@@ -14,6 +14,18 @@ const KEYFRAMES = `
   78% { opacity: 1; transform: scale(0.98); }
   100% { opacity: 0; transform: scale(0.96); }
 }
+@keyframes buckshot-alert-slam {
+  0% { opacity: 0; transform: scale(1.9); }
+  70% { opacity: 1; transform: scale(0.94); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes buckshot-alert-settle {
+  100% { bottom: 70%; opacity: 0.85; transform: scale(0.7); }
+}
+@keyframes buckshot-throb {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.07); }
+}
 @keyframes buckshot-pulse {
   0%, 100% { opacity: 0.35; }
   50% { opacity: 1; }

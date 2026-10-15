@@ -127,6 +127,7 @@ export class GameClient {
     this.gameOverReported = false;
     this.hud.reset();
     this.input.reset();
+    this.audio.reset();
     this.renderer.reset(this.simulation.world);
     this.lastFrame = performance.now();
     this.startLoop();
