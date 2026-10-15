@@ -84,11 +84,13 @@ describe("createWorld", () => {
 });
 
 describe("time", () => {
-  test("standing still for 10 seconds barely moves the clock", () => {
+  test("standing still for 10 seconds stops the clock", () => {
     const world = makeWorld();
     run(world, makeDeps(), 10);
     expect(world.realTime).toBeCloseTo(10, 6);
-    expect(world.gameTime).toBeCloseTo(DEFAULT_TIME_POLICY.idleScale * 10, 6);
+    expect(DEFAULT_TIME_POLICY.idleScale).toBe(0);
+    expect(world.gameTime).toBe(0);
+    expect(world.pieces.every((entry) => entry.phase === "idle")).toBe(true);
   });
 
   test("walking makes time flow at roughly full speed", () => {
@@ -128,6 +130,30 @@ describe("movement", () => {
     expect(
       Math.hypot(world.player.velocity.x, world.player.velocity.y)
     ).toBeCloseTo(DEFAULT_PLAYER.moveSpeed);
+  });
+
+  test("a long frame cannot wedge the player between two side-by-side pieces", () => {
+    const world = makeWorld({
+      white: [
+        ["pawn", "d7"],
+        ["pawn", "e7"],
+      ],
+    });
+    world.player.pos = { x: 4, y: 7.6 };
+    const deps = makeDeps({ decide: waitBrain });
+    const push = frame({ moveY: 1 });
+    let lowest = world.player.pos.y;
+    const track = (current: WorldState) => {
+      lowest = Math.min(lowest, current.player.pos.y);
+      return false;
+    };
+    // Press into the notch between d7 and e7, take one hitch frame, then keep pushing.
+    run(world, deps, 30 * FRAME, { input: push, until: track });
+    stepWorld(world, push, 0.1, deps);
+    track(world);
+    run(world, deps, 2, { input: push, until: track });
+    expect(lowest).toBeGreaterThan(7 - 0.12);
+    expect(squareAt(world.player.pos).rank).toBe(7);
   });
 });
 
@@ -196,6 +222,33 @@ describe("shotgun", () => {
       },
     ]);
     expect(world.status).toBe("playing");
+  });
+
+  test("pellets fired from a square's corner cannot slip diagonally between two pieces", () => {
+    const world = makeWorld({
+      playerStart: "e5",
+      shotgun: { pellets: 1, spreadDegrees: 0, spreadJitter: 0 },
+      white: [
+        ["pawn", "f5"],
+        ["pawn", "e6"],
+        ["king", "f6"],
+      ],
+    });
+    const deps = makeDeps({ decide: waitBrain, targetScale: fullSpeed });
+    world.player.yaw = -Math.PI / 4;
+    // Walk into e5's north-east corner, so the barrel itself sits inside f6.
+    run(world, deps, 2, { input: frame({ moveY: 1 }) });
+    expect(squareName(squareAt(world.player.pos))).toBe("e5");
+    expect(world.player.pos.x).toBeGreaterThan(4.85);
+    expect(world.player.pos.y).toBeGreaterThan(4.85);
+
+    const events = run(world, deps, 2, {
+      input: (index) => (index === 0 ? FIRE : frame()),
+    });
+    const hits = eventsOfType(events, "pieceHit");
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.kind).toBe("pawn");
+    expect(pieceAt(world, "f6").hp).toBe(world.config.pieces.king.maxHp);
   });
 
   test("reloading consumes reserve and takes reloadDuration at full speed", () => {
@@ -388,7 +441,8 @@ describe("invariants", () => {
     expect(player.loaded).toBeLessThanOrEqual(world.config.shotgun.capacity);
     expect(player.reserve).toBeGreaterThanOrEqual(0);
     expect(player.reserve).toBeLessThanOrEqual(world.config.shotgun.reserveMax);
-    expect(world.timeScale).toBeGreaterThan(0);
+    // Smoothing towards a zero idle scale can underflow to exactly 0 after a long stop.
+    expect(world.timeScale).toBeGreaterThanOrEqual(0);
     expect(world.timeScale).toBeLessThanOrEqual(1);
   };
 
@@ -412,5 +466,25 @@ describe("invariants", () => {
       outcomes.add(world.status);
     }
     expect(outcomes.has("lost")).toBe(true);
+  });
+
+  test("the board rules hold at the longest simulated frame too", () => {
+    for (let seed = 1; seed <= 12; seed += 1) {
+      const config = makeConfig({
+        white: SKIRMISH_SETUP.white.map(
+          (entry) => [entry.kind, squareName(entry.square)] as const
+        ),
+      });
+      const deps = makeDeps({}, seed);
+      const world = createWorld(config, deps.rng);
+      run(world, deps, 90, {
+        dt: 0.1,
+        input: randomInput(mulberry32(seed * 104_729)),
+        until: (current) => {
+          checkInvariants(current);
+          return current.status !== "playing";
+        },
+      });
+    }
   });
 });

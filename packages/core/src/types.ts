@@ -77,7 +77,10 @@ export interface PelletState {
   readonly origin: Vec2;
   /** Current board-space position. */
   pos: Vec2;
-  /** Position at the previous step (renderer uses origin→pos for trails). */
+  /**
+   * Position at the previous step (renderer uses origin→pos for trails). Until the first non-zero
+   * step it holds the player's centre, so the simulation collision-checks player → muzzle too.
+   */
   prevPos: Vec2;
   /** Board units travelled so far. */
   traveled: number;
@@ -230,7 +233,7 @@ export interface PlayerStats {
 }
 
 export interface TimePolicyData {
-  /** Time scale while completely still (SUPERHOT never fully freezes; 0 = hard freeze). */
+  /** Time scale while completely still (0 = hard freeze, the default: time only moves when the king does). */
   readonly idleScale: number;
   /** Camera angular speed (rad/real s) that counts as "full speed" time. */
   readonly lookFullSpeed: number;

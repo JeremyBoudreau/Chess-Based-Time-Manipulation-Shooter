@@ -54,6 +54,13 @@ const FIRST_ACTION_SPREAD = 1.5;
 const PROMOTION_RANK = BOARD_SIZE - 1;
 /** Pushing out of one collider can push into a neighbour; a second pass settles it. */
 const COLLISION_PASSES = 2;
+/**
+ * Longest player move resolved at once, as a fraction of the player's radius. The gap between two
+ * side-by-side pieces' colliders (2 × PIECE_INSET) is narrower than the player, but one long hitch
+ * frame could push the circle past it and the push-out passes would then bounce it between the two
+ * boxes instead of back out. Sub-stepping keeps every collision step short enough to settle.
+ */
+const MAX_SUBSTEP_RADIUS_FRACTION = 0.5;
 const RANGE_EPSILON = 1e-9;
 
 interface Box {
@@ -235,7 +242,8 @@ const resolvePosition = (world: WorldState, wanted: Vec2): Vec2 => {
 
 /**
  * Walks the player in REAL time (the player is never slowed, only the world is), resolving x then y
- * so walls and pieces slide instead of stopping dead. Returns |velocity| / moveSpeed.
+ * so walls and pieces slide instead of stopping dead. Long frames are split into short sub-steps so
+ * the player can never be forced into a gap between two pieces. Returns |velocity| / moveSpeed.
  */
 const applyMovement = (
   world: WorldState,
@@ -254,14 +262,22 @@ const applyMovement = (
     wishY /= wishLength;
   }
   const start = player.pos;
-  const afterX = resolvePosition(world, {
-    x: start.x + wishX * moveSpeed * dt,
-    y: start.y,
-  });
-  const end = resolvePosition(world, {
-    x: afterX.x,
-    y: afterX.y + wishY * moveSpeed * dt,
-  });
+  const maxSubstep = world.config.player.radius * MAX_SUBSTEP_RADIUS_FRACTION;
+  const travel = Math.min(1, wishLength) * moveSpeed * dt;
+  const substeps =
+    maxSubstep > 0 ? Math.max(1, Math.ceil(travel / maxSubstep)) : 1;
+  const subDt = dt / substeps;
+  let end = start;
+  for (let index = 0; index < substeps; index += 1) {
+    const afterX = resolvePosition(world, {
+      x: end.x + wishX * moveSpeed * subDt,
+      y: end.y,
+    });
+    end = resolvePosition(world, {
+      x: afterX.x,
+      y: afterX.y + wishY * moveSpeed * subDt,
+    });
+  }
   const movedX = end.x - start.x;
   const movedY = end.y - start.y;
   const moved = Math.hypot(movedX, movedY);
@@ -287,7 +303,8 @@ const fireShell = (world: WorldState, rng: () => number): void => {
       id: world.nextPelletId,
       origin,
       pos: origin,
-      prevPos: origin,
+      // The first step is collision-checked from here, so the barrel offset cannot skip a square.
+      prevPos: player.pos,
       traveled: 0,
     });
     world.nextPelletId += 1;
@@ -424,6 +441,10 @@ const damagePiece = (world: WorldState, piece: PieceState): void => {
 /**
  * Moves one pellet along this frame's segment, checking every square it crosses so it can never
  * tunnel through a piece. The player's own square is ignored (pellets start inside it).
+ *
+ * The first step is checked from the player's centre (`prevPos`), not the muzzle: from a corner of
+ * the player's square the muzzle can already sit in the diagonal square, and starting the walk there
+ * would let a shot slip between the two side squares' pieces.
  */
 const advancePellet = (
   world: WorldState,
@@ -440,7 +461,8 @@ const advancePellet = (
     x: pellet.pos.x + pellet.dir.x * step,
     y: pellet.pos.y + pellet.dir.y * step,
   };
-  for (const square of traverseSquares(pellet.pos, next)) {
+  const from = pellet.traveled > 0 ? pellet.pos : pellet.prevPos;
+  for (const square of traverseSquares(from, next)) {
     if (sameSquare(square, context.playerSquare)) {
       continue;
     }
@@ -456,9 +478,12 @@ const advancePellet = (
       return;
     }
   }
-  pellet.prevPos = pellet.pos;
-  pellet.pos = next;
-  pellet.traveled += step;
+  // A zero-length step (frozen time) keeps `prevPos` on the player, so the barrel check stays pending.
+  if (step > 0) {
+    pellet.prevPos = pellet.pos;
+    pellet.pos = next;
+    pellet.traveled += step;
+  }
   if (pellet.traveled >= pelletRange - RANGE_EPSILON) {
     expirePellet(world, pellet);
   }
