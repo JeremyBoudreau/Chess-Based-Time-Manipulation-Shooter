@@ -9,6 +9,7 @@ import {
   DEFAULT_TIME_POLICY,
   type KillCounts,
   maxTimeScale,
+  PIECE_KINDS,
   type RunResult,
 } from "@buckshot/core";
 import { findImplausibility } from "../run-plausibility";
@@ -19,7 +20,7 @@ const { sprintScale } = DEFAULT_TIME_POLICY;
 const fastestScale = maxTimeScale(DEFAULT_TIME_POLICY);
 const REAL_TIME_MS = 60_000;
 
-/** Every skirmish piece dead: five pawns, the rook, the bishop and the king. */
+/** Every Easy piece dead: five pawns, the rook, the bishop and the king. */
 const FULL_CLEAR: KillCounts = {
   bishop: 1,
   king: 1,
@@ -60,7 +61,7 @@ const sprintWin = (overrides: Partial<RunResult> = {}): RunResult => ({
   pelletsFired: 24 * DEFAULT_SHOTGUN.pellets,
   pelletsHit: 66,
   realTimeMs: REAL_TIME_MS,
-  setupId: "skirmish",
+  setupId: "easy",
   shotsFired: 24,
   ...overrides,
 });
@@ -68,7 +69,7 @@ const sprintWin = (overrides: Partial<RunResult> = {}): RunResult => ({
 const withKills = (kills: Partial<KillCounts>): RunResult =>
   sprintWin({ kills: { ...FULL_CLEAR, ...kills } });
 
-/** Hits needed to clear the whole skirmish (the least a full-clear win can have landed). */
+/** Hits needed to clear the whole Easy army (the least a full-clear win can have landed). */
 const FULL_CLEAR_HITS = Math.ceil(
   (5 * DEFAULT_PIECE_CATALOG.pawn.maxHp +
     DEFAULT_PIECE_CATALOG.rook.maxHp +
@@ -255,6 +256,89 @@ describe("findImplausibility: forged wins", () => {
     const rushed = { ...firing(shots, reloadMs - 100), realTimeMs: 600_000 };
     expect(findImplausibility(rushed)).toBe(
       "too little game-time for the reloads"
+    );
+  });
+});
+
+/**
+ * Hard's whole army, restated from the difficulty rules rather than read from the setup: Medium adds
+ * a rook, a bishop and three pawns to Easy, and Hard adds both knights and the queen on top.
+ */
+const HARD_CLEAR: KillCounts = {
+  bishop: 2,
+  king: 1,
+  knight: 2,
+  pawn: 8,
+  queen: 1,
+  rook: 2,
+};
+
+/** Least number of pellets that can have landed for these kills. */
+const hitsToKill = (kills: KillCounts): number =>
+  Math.ceil(
+    PIECE_KINDS.reduce(
+      (sum, kind) => sum + kills[kind] * DEFAULT_PIECE_CATALOG[kind].maxHp,
+      0
+    ) / DEFAULT_SHOTGUN.damagePerPellet
+  );
+
+/** A full-clear win on `setupId`, firing a few shells more than the hits strictly need. */
+const clearWin = (setupId: string, kills: KillCounts): RunResult => {
+  const hits = hitsToKill(kills);
+  const shotsFired = Math.ceil(hits / DEFAULT_SHOTGUN.pellets) + 4;
+  return sprintWin({
+    kills,
+    pelletsFired: shotsFired * DEFAULT_SHOTGUN.pellets,
+    pelletsHit: hits,
+    setupId,
+    shotsFired,
+  });
+};
+
+describe("findImplausibility: difficulties", () => {
+  test("a legal Hard full-clear passes, knights and queen included", () => {
+    expect(findImplausibility(clearWin("hard", HARD_CLEAR))).toBeNull();
+  });
+
+  test("Hard still caps each kind at what it fields", () => {
+    expect(
+      findImplausibility(clearWin("hard", { ...HARD_CLEAR, knight: 3 }))
+    ).toBe("more knights killed than fielded");
+    expect(
+      findImplausibility(clearWin("hard", { ...HARD_CLEAR, queen: 2 }))
+    ).toBe("more pawns and queens killed than fielded");
+  });
+
+  test("a Hard-sized clear claimed on Easy is rejected", () => {
+    expect(findImplausibility(clearWin("easy", HARD_CLEAR))).not.toBeNull();
+  });
+
+  test("knight kills on Easy are rejected", () => {
+    expect(
+      findImplausibility(sprintWin({ kills: { ...FULL_CLEAR, knight: 1 } }))
+    ).toBe("more knights killed than fielded");
+  });
+
+  test("a queen kill on Easy needs a promoted pawn", () => {
+    // Easy fields no queen, so a dead queen must be one of its five pawns.
+    expect(findImplausibility(withKills({ pawn: 4, queen: 1 }))).toBeNull();
+    expect(findImplausibility(withKills({ queen: 1 }))).toBe(
+      "more pawns and queens killed than fielded"
+    );
+  });
+
+  test("Medium's second rook and bishop count there but not on Easy", () => {
+    const doubled = { ...FULL_CLEAR, bishop: 2, rook: 2 };
+    expect(findImplausibility(clearWin("medium", doubled))).toBeNull();
+    expect(findImplausibility(clearWin("easy", doubled))).toBe(
+      "more rooks killed than fielded"
+    );
+  });
+
+  test("the legacy skirmish id still validates, against Easy's army", () => {
+    expect(findImplausibility(sprintWin({ setupId: "skirmish" }))).toBeNull();
+    expect(findImplausibility(clearWin("skirmish", HARD_CLEAR))).toBe(
+      "more pawns and queens killed than fielded"
     );
   });
 });

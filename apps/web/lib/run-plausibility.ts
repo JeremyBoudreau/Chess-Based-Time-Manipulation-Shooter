@@ -3,11 +3,11 @@ import {
   DEFAULT_PIECE_CATALOG,
   DEFAULT_SHOTGUN,
   DEFAULT_TIME_POLICY,
+  findSetup,
   maxTimeScale,
   PIECE_KINDS,
   type PieceKind,
   type RunResult,
-  SETUPS,
 } from "@buckshot/core";
 
 /** Rounding slack when comparing millisecond timers that were rounded independently. */
@@ -44,7 +44,9 @@ const maxShellSupply = (gameTimeCeilingMs: number): number => {
  * owns the simulation, so this only raises the floor to the theoretical best run.
  */
 export const findImplausibility = (result: RunResult): string | null => {
-  const setup = SETUPS.find((candidate) => candidate.id === result.setupId);
+  // findSetup also resolves legacy ids, so runs saved before difficulties existed still validate
+  // against the army they were played on; the kill budgets below come from that army.
+  const setup = findSetup(result.setupId);
   if (!setup) {
     return "unknown setup";
   }

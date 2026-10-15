@@ -7,10 +7,13 @@ import { drizzle } from "drizzle-orm/libsql";
 import { Effect } from "effect";
 import type { DrizzleDb } from "../client";
 import {
+  distinctSetupIdsQuery,
   MIN_SAVE_INTERVAL_MS,
   makeRunRepository,
   type RunRepositoryShape,
   SAVE_LATENCY_SLACK_MS,
+  setupIdsMeaning,
+  totalKillsOf,
 } from "../run-repository";
 import { run, schema, user } from "../schema";
 
@@ -26,7 +29,7 @@ const aRun = (overrides: Partial<RunResult> = {}): RunResult => ({
   pelletsFired: 40,
   pelletsHit: 30,
   realTimeMs: 20_000,
-  setupId: "skirmish",
+  setupId: "easy",
   shotsFired: 8,
   ...overrides,
 });
@@ -113,5 +116,238 @@ describe("RunRepository.save", () => {
       .values({ email: "q@example.com", id: "user-2", name: "Other" });
     await Effect.runPromise(runs.save("user-2", aRun({ realTimeMs: 0 })));
     expect(await save(aRun({ realTimeMs: 0 }))).toBe("saved");
+  });
+});
+
+const OTHER_ID = "user-2";
+
+const addOtherUser = () =>
+  db
+    .insert(user)
+    .values({ email: "q@example.com", id: OTHER_ID, name: "Other" });
+
+let seededRuns = 0;
+
+/** Stores a run directly, skipping save's rate limit, so a test can lay down a whole history. */
+const seedRun = (userId: string, overrides: Partial<RunResult> = {}) => {
+  const result = aRun(overrides);
+  seededRuns += 1;
+  return db.insert(run).values({
+    ...result,
+    id: `seeded-${seededRuns}`,
+    totalKills: totalKillsOf(result.kills),
+    userId,
+  });
+};
+
+/** A loss with `pawns` pawn kills and nothing else. */
+const aLoss = (setupId: string, pawns: number): Partial<RunResult> => ({
+  killedBy: "pawn",
+  kills: { bishop: 0, king: 0, knight: 0, pawn: pawns, queen: 0, rook: 0 },
+  outcome: "lost",
+  setupId,
+});
+
+const boardFor = (setupId: string) =>
+  Effect.runPromise(runs.leaderboard({ setupId }));
+
+describe("setupIdsMeaning", () => {
+  test("folds legacy ids into the setup they now mean", () => {
+    const stored = ["skirmish", "easy", "medium", "hard"];
+    expect(setupIdsMeaning("easy", stored).toSorted()).toEqual([
+      "easy",
+      "skirmish",
+    ]);
+    expect(setupIdsMeaning("skirmish", stored).toSorted()).toEqual([
+      "easy",
+      "skirmish",
+    ]);
+    expect(setupIdsMeaning("hard", stored)).toEqual(["hard"]);
+  });
+
+  test("always includes the setup's own id, even with no runs stored", () => {
+    expect(setupIdsMeaning("medium", [])).toEqual(["medium"]);
+  });
+});
+
+describe("distinctSetupIdsQuery", () => {
+  test("lists each stored setup id once", async () => {
+    const stored = ["hard", "skirmish", "easy", "hard", "nightmare"];
+    await Promise.all(stored.map((setupId) => seedRun(USER_ID, { setupId })));
+    const rows = await db.all<{ setupId: string }>(distinctSetupIdsQuery);
+    expect(rows.map((row) => row.setupId)).toEqual([
+      "easy",
+      "hard",
+      "nightmare",
+      "skirmish",
+    ]);
+  });
+
+  test("is empty when no run is stored", async () => {
+    expect(await db.all(distinctSetupIdsQuery)).toEqual([]);
+  });
+
+  test("seeks the setup index instead of scanning every run", async () => {
+    const plan = await db.all<{ detail: string }>(
+      sql`explain query plan ${distinctSetupIdsQuery}`
+    );
+    const details = plan.map((step) => step.detail);
+    expect(details.some((detail) => detail.startsWith("SEARCH run"))).toBe(
+      true
+    );
+    expect(details.some((detail) => detail.startsWith("SCAN run"))).toBe(false);
+  });
+});
+
+describe("RunRepository.leaderboard", () => {
+  test("ranks wins and kills on the requested difficulty only", async () => {
+    await addOtherUser();
+    await seedRun(USER_ID, { gameTimeMs: 9000, setupId: "easy" });
+    await seedRun(USER_ID, { gameTimeMs: 40_000, setupId: "hard" });
+    await seedRun(OTHER_ID, { gameTimeMs: 30_000, setupId: "hard" });
+    await seedRun(OTHER_ID, aLoss("medium", 6));
+
+    const hard = await boardFor("hard");
+    expect(
+      hard.fastestWins.map((entry) => [entry.userId, entry.bestGameTimeMs])
+    ).toEqual([
+      [OTHER_ID, 30_000],
+      [USER_ID, 40_000],
+    ]);
+
+    const easy = await boardFor("easy");
+    expect(easy.fastestWins.map((entry) => entry.userId)).toEqual([USER_ID]);
+    expect(easy.mostKills.map((entry) => entry.userId)).toEqual([USER_ID]);
+
+    const medium = await boardFor("medium");
+    expect(medium.fastestWins).toEqual([]);
+    expect(medium.mostKills).toEqual([
+      { games: 1, name: "Other", totalKills: 6, userId: OTHER_ID },
+    ]);
+  });
+
+  test("counts legacy skirmish runs as Easy", async () => {
+    await seedRun(USER_ID, { gameTimeMs: 8000, setupId: "skirmish" });
+    await seedRun(USER_ID, { gameTimeMs: 9000, setupId: "easy" });
+    await seedRun(USER_ID, aLoss("skirmish", 3));
+    await seedRun(USER_ID, { gameTimeMs: 5000, setupId: "hard" });
+
+    const easy = await boardFor("easy");
+    expect(easy.fastestWins).toEqual([
+      { bestGameTimeMs: 8000, name: "Player", userId: USER_ID, wins: 2 },
+    ]);
+    // Two wins of 4 kills each (aRun's default) plus the legacy loss's 3; the Hard win stays out.
+    expect(easy.mostKills).toEqual([
+      { games: 3, name: "Player", totalKills: 11, userId: USER_ID },
+    ]);
+    // Asking by the legacy id ranks the same board.
+    expect(await boardFor("skirmish")).toEqual(easy);
+    expect((await boardFor("hard")).fastestWins[0]?.bestGameTimeMs).toBe(5000);
+  });
+
+  test("an unknown difficulty has empty boards", async () => {
+    await seedRun(USER_ID);
+    expect(await boardFor("nightmare")).toEqual({
+      fastestWins: [],
+      mostKills: [],
+    });
+  });
+
+  test("honours the limit on both boards", async () => {
+    await addOtherUser();
+    await seedRun(USER_ID, { gameTimeMs: 9000 });
+    await seedRun(OTHER_ID, { gameTimeMs: 8000 });
+    const board = await Effect.runPromise(
+      runs.leaderboard({ limit: 1, setupId: "easy" })
+    );
+    expect(board.fastestWins.map((entry) => entry.userId)).toEqual([OTHER_ID]);
+    expect(board.mostKills).toHaveLength(1);
+  });
+});
+
+describe("RunRepository.statsForUser", () => {
+  const statsOf = (userId: string) =>
+    Effect.runPromise(runs.statsForUser(userId));
+
+  test("reports the best win per difficulty, easiest first, legacy runs as Easy", async () => {
+    await seedRun(USER_ID, { gameTimeMs: 8000, setupId: "skirmish" });
+    await seedRun(USER_ID, { gameTimeMs: 9500, setupId: "easy" });
+    await seedRun(USER_ID, aLoss("easy", 2));
+    await seedRun(USER_ID, { gameTimeMs: 40_000, setupId: "hard" });
+    await seedRun(USER_ID, aLoss("hard", 1));
+
+    const stats = await statsOf(USER_ID);
+    expect(stats.difficulties).toEqual([
+      { bestWinGameTimeMs: 8000, games: 3, setupId: "easy", wins: 2 },
+      { bestWinGameTimeMs: null, games: 0, setupId: "medium", wins: 0 },
+      { bestWinGameTimeMs: 40_000, games: 2, setupId: "hard", wins: 1 },
+    ]);
+    expect(stats.bestWinGameTimeMs).toBe(8000);
+    expect(stats.games).toBe(5);
+    expect(stats.wins).toBe(3);
+  });
+
+  test("lists every difficulty before the first run", async () => {
+    const stats = await statsOf(USER_ID);
+    expect(stats.difficulties.map((entry) => entry.setupId)).toEqual([
+      "easy",
+      "medium",
+      "hard",
+    ]);
+    expect(
+      stats.difficulties.every(
+        (entry) => entry.bestWinGameTimeMs === null && entry.games === 0
+      )
+    ).toBe(true);
+  });
+
+  test("ignores other players' runs", async () => {
+    await addOtherUser();
+    await seedRun(OTHER_ID, { gameTimeMs: 1000, setupId: "medium" });
+    const stats = await statsOf(USER_ID);
+    expect(stats.difficulties[1]).toEqual({
+      bestWinGameTimeMs: null,
+      games: 0,
+      setupId: "medium",
+      wins: 0,
+    });
+  });
+});
+
+describe("RunRepository.save: personal bests", () => {
+  /** Saves a quick win and reports whether it was a personal best, clearing the rate limit after. */
+  const personalBest = async (overrides: Partial<RunResult>) => {
+    const saved = await Effect.runPromise(
+      runs.save(USER_ID, aRun({ realTimeMs: 0, ...overrides }))
+    );
+    await backdateRuns(MIN_SAVE_INTERVAL_MS + 100);
+    return saved.personalBest;
+  };
+
+  test("are kept per difficulty", async () => {
+    expect(await personalBest({ gameTimeMs: 9000, setupId: "easy" })).toBe(
+      true
+    );
+    // Slower than the Easy best, but the first Hard win.
+    expect(await personalBest({ gameTimeMs: 30_000, setupId: "hard" })).toBe(
+      true
+    );
+    expect(await personalBest({ gameTimeMs: 35_000, setupId: "hard" })).toBe(
+      false
+    );
+    expect(await personalBest({ gameTimeMs: 8000, setupId: "easy" })).toBe(
+      true
+    );
+  });
+
+  test("count legacy skirmish wins as Easy", async () => {
+    await seedRun(USER_ID, { gameTimeMs: 7000, setupId: "skirmish" });
+    await backdateRuns(MIN_SAVE_INTERVAL_MS + 100);
+    expect(await personalBest({ gameTimeMs: 7500, setupId: "easy" })).toBe(
+      false
+    );
+    expect(await personalBest({ gameTimeMs: 6500, setupId: "easy" })).toBe(
+      true
+    );
   });
 });

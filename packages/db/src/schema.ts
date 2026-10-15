@@ -130,7 +130,13 @@ export const run = sqliteTable(
   },
   (table) => [
     index("run_userId_idx").on(table.userId),
-    index("run_outcome_gameTimeMs_idx").on(table.outcome, table.gameTimeMs),
+    // Boards are per difficulty: seek by setup (and outcome), then rank by game-time. Replaces the
+    // old (outcome, game_time_ms) index, which only served the single all-difficulty board.
+    index("run_setupId_outcome_gameTimeMs_idx").on(
+      table.setupId,
+      table.outcome,
+      table.gameTimeMs
+    ),
   ]
 );
 

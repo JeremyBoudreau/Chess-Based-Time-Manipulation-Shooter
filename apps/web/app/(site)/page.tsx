@@ -4,6 +4,7 @@ import {
   DEFAULT_TIME_POLICY,
   maxTimeScale,
   PIECE_KINDS,
+  SETUPS,
 } from "@buckshot/core";
 import { Button } from "@buckshot/ui/components/button";
 import {
@@ -22,7 +23,10 @@ import {
   TableRow,
 } from "@buckshot/ui/components/table";
 import Link from "next/link";
+import { ArmyComposition } from "@/components/site/army-composition";
+import { DifficultyPips } from "@/components/site/difficulty";
 import { SectionHeading } from "@/components/site/section-heading";
+import { withDifficulty } from "@/lib/difficulty";
 import { capitalize } from "@/lib/format";
 import { PIECE_BLURBS, PIECE_GLYPHS } from "@/lib/pieces";
 import { getViewer } from "@/lib/session";
@@ -99,6 +103,46 @@ function BoardBackdrop() {
         <div className="absolute inset-x-[-50%] inset-y-0 origin-bottom bg-[length:88px_88px] bg-[repeating-conic-gradient(oklch(1_0_0/0.07)_0_25%,transparent_0_50%)] [mask-image:linear-gradient(to_top,black,transparent)] [transform:rotateX(62deg)]" />
       </div>
     </div>
+  );
+}
+
+/**
+ * The three armies, easiest first, each a card that starts a game on it. The whole card is the
+ * link's hit area (a stretched ::after), but the link's own text stays short for screen readers.
+ */
+function DifficultyCards() {
+  return (
+    <ul className="mt-12 grid gap-4 md:grid-cols-3">
+      {SETUPS.map((setup, index) => (
+        <li key={setup.id}>
+          <Card className="relative h-full border-white/10 bg-card/60 transition-colors hover:border-blood/50">
+            <CardHeader>
+              <div className="flex items-center justify-between gap-4">
+                <p className="font-mono text-blood text-xs">
+                  0{index + 1} / {setup.white.length} pieces
+                </p>
+                <DifficultyPips setupId={setup.id} />
+              </div>
+              <CardTitle className="font-black text-3xl uppercase tracking-tight">
+                {setup.name}
+              </CardTitle>
+              <CardDescription className="text-base leading-relaxed">
+                {setup.description}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="mt-auto flex flex-col gap-6">
+              <ArmyComposition setup={setup} />
+              <Link
+                className="font-black text-blood text-sm uppercase tracking-[0.25em] outline-none after:absolute after:inset-0 after:rounded-xl hover:underline hover:underline-offset-8 focus-visible:after:ring-2 focus-visible:after:ring-blood"
+                href={withDifficulty("/play", setup.id)}
+              >
+                Play {setup.name} ▸
+              </Link>
+            </CardContent>
+          </Card>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -318,6 +362,24 @@ export default async function HomePage() {
               ))}
             </TableBody>
           </Table>
+        </div>
+      </section>
+
+      <section
+        aria-labelledby="difficulty"
+        className="border-white/5 border-t bg-card/30"
+      >
+        <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-28">
+          <SectionHeading id="difficulty" kicker="Difficulty">
+            Choose your
+            <br />
+            difficulty
+          </SectionHeading>
+          <p className="mt-6 max-w-2xl text-muted-foreground">
+            Each army is the one before it plus reinforcements, and each keeps
+            its own leaderboard.
+          </p>
+          <DifficultyCards />
         </div>
       </section>
 

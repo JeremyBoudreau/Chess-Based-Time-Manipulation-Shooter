@@ -1,8 +1,10 @@
 import {
+  findSetup,
   type KillCounts,
   PIECE_KINDS,
   type PieceKind,
   type RunResult,
+  SETUPS,
 } from "@buckshot/core";
 import {
   and,
@@ -10,6 +12,7 @@ import {
   count,
   desc,
   eq,
+  inArray,
   isNotNull,
   min,
   type SQLWrapper,
@@ -36,14 +39,30 @@ export class RunTooSoon extends Data.TaggedError("RunTooSoon")<{
 
 export interface SavedRun {
   readonly id: string;
-  /** True when this run is a win faster (in game-time) than every earlier win by the same user. */
+  /**
+   * True when this run is a win faster (in game-time) than every earlier win by the same user on
+   * the same difficulty. Bigger armies take longer to clear, so times only compare within one.
+   */
   readonly personalBest: boolean;
+}
+
+/** One user's record on one difficulty. */
+export interface DifficultyStats {
+  /** Fastest winning game-time on this difficulty, or null before the first win there. */
+  readonly bestWinGameTimeMs: number | null;
+  readonly games: number;
+  /** The setup's current id; runs stored under a legacy id are counted here too. */
+  readonly setupId: string;
+  readonly wins: number;
 }
 
 export interface UserStats {
   /** pelletsHit / pelletsFired over every run, 0 when nothing was fired. */
   readonly accuracy: number;
+  /** Fastest win on any difficulty; see `difficulties` for times that compare like with like. */
   readonly bestWinGameTimeMs: number | null;
+  /** One entry per playable setup, in `SETUPS` order (easiest first), even before any run. */
+  readonly difficulties: readonly DifficultyStats[];
   /** The piece kind this user has killed most often. */
   readonly favouriteVictim: PieceKind | null;
   readonly games: number;
@@ -75,8 +94,18 @@ export interface Leaderboard {
   readonly mostKills: readonly MostKillsEntry[];
 }
 
+export interface LeaderboardQuery {
+  /** Rows per board. */
+  readonly limit?: number;
+  /** The difficulty to rank. A legacy id ranks the setup it now means, as `findSetup` resolves it. */
+  readonly setupId: string;
+}
+
 export interface RunRepositoryShape {
-  readonly leaderboard: (limit?: number) => Effect.Effect<Leaderboard, DbError>;
+  /** Both boards for one difficulty only: times and kill totals do not compare across armies. */
+  readonly leaderboard: (
+    query: LeaderboardQuery
+  ) => Effect.Effect<Leaderboard, DbError>;
   readonly listForUser: (
     userId: string,
     limit?: number
@@ -130,6 +159,56 @@ export const isPersonalBest = (
   result.outcome === "won" &&
   (previousBestMs === null || result.gameTimeMs < previousBestMs);
 
+/**
+ * The id a stored `setup_id` means today: legacy ids (runs saved before difficulties existed) map
+ * to their current setup, and an id core no longer knows stands for itself.
+ */
+export const canonicalSetupId = (setupId: string): string =>
+  findSetup(setupId)?.id ?? setupId;
+
+/**
+ * Every id in `storedIds` that means the same setup as `setupId`, plus that setup's current id, so
+ * the result is never empty (an empty `in ()` list would need special-casing). Matching through
+ * `findSetup` instead of a list kept here means a legacy alias added in core needs no change here.
+ */
+export const setupIdsMeaning = (
+  setupId: string,
+  storedIds: Iterable<string>
+): string[] => {
+  const target = canonicalSetupId(setupId);
+  return [...new Set([target, ...storedIds])].filter(
+    (id) => canonicalSetupId(id) === target
+  );
+};
+
+/**
+ * Every distinct stored `setup_id`, as `{ setupId }` rows. `select distinct` reads every entry of
+ * the setup index (cost grows with all runs on every difficulty, on each leaderboard view), so
+ * this walks the index instead: each step seeks the next id greater than the last, which costs
+ * one index seek per distinct id, and there are only a handful.
+ */
+export const distinctSetupIdsQuery = sql`
+  with recursive stored_ids(setup_id) as (
+    select min(${run.setupId}) from ${run}
+    union all
+    select (select min(${run.setupId}) from ${run} where ${run.setupId} > stored_ids.setup_id)
+    from stored_ids
+    where stored_ids.setup_id is not null
+  )
+  select setup_id as "setupId" from stored_ids where setup_id is not null
+`;
+
+/** The smallest non-null value, or null when there is none. */
+const minOrNull = (values: Iterable<number | null>): number | null => {
+  let best: number | null = null;
+  for (const value of values) {
+    if (value !== null && (best === null || value < best)) {
+      best = value;
+    }
+  }
+  return best;
+};
+
 /** The key with the highest positive count, or null when everything is zero. */
 const argMax = (counts: KillCounts): PieceKind | null => {
   let best: PieceKind | null = null;
@@ -151,6 +230,20 @@ const killSumColumns = Object.fromEntries(
   PIECE_KINDS.map((kind) => [kind, sumKillsOf(kind)])
 );
 
+/** Wins among the grouped runs. */
+const winCount =
+  sql<number>`coalesce(sum(case when ${run.outcome} = 'won' then 1 else 0 end), 0)`.mapWith(
+    Number
+  );
+
+/** Fastest winning game-time among the grouped runs; SQL null when none of them is a win. */
+const bestWinTime = sql<
+  number | null
+>`min(case when ${run.outcome} = 'won' then ${run.gameTimeMs} end)`;
+
+const toNullableNumber = (value: unknown): number | null =>
+  value === null || value === undefined ? null : Number(value);
+
 const toKillCounts = (row: Record<string, unknown>): KillCounts => {
   const counts = {} as Record<PieceKind, number>;
   for (const kind of PIECE_KINDS) {
@@ -165,20 +258,36 @@ const cell = (column: AnySQLiteColumn, value: unknown) =>
 
 /** Builds the repository against a concrete drizzle client. */
 export const makeRunRepository = (db: DrizzleDb): RunRepositoryShape => {
-  const bestWinMs = (userId: string) =>
+  /**
+   * The user's fastest win on `setupId`'s difficulty. Grouped by stored id and matched in code,
+   * because which ids mean the same setup (legacy aliases) is known to `findSetup`, not to SQL.
+   */
+  const bestWinMs = (userId: string, setupId: string) =>
     query("bestWin", () =>
       db
-        .select({ best: min(run.gameTimeMs) })
+        .select({ best: min(run.gameTimeMs), setupId: run.setupId })
         .from(run)
         .where(and(eq(run.userId, userId), eq(run.outcome, "won")))
-    ).pipe(Effect.map((rows) => rows[0]?.best ?? null));
+        .groupBy(run.setupId)
+    ).pipe(
+      Effect.map((rows) => {
+        const target = canonicalSetupId(setupId);
+        return minOrNull(
+          rows
+            .filter((row) => canonicalSetupId(row.setupId) === target)
+            .map((row) => toNullableNumber(row.best))
+        );
+      })
+    );
 
   const save = Effect.fn("RunRepository.save")(function* (
     userId: string,
     result: RunResult
   ) {
     const previousBest =
-      result.outcome === "won" ? yield* bestWinMs(userId) : null;
+      result.outcome === "won"
+        ? yield* bestWinMs(userId, result.setupId)
+        : null;
     const id = crypto.randomUUID();
     const windowMs = saveWindowMs(result);
     const cells: readonly (readonly [AnySQLiteColumn, SQLWrapper])[] = [
@@ -242,9 +351,7 @@ export const makeRunRepository = (db: DrizzleDb): RunRepositoryShape => {
       db
         .select({
           ...killSumColumns,
-          bestWin: sql<
-            number | null
-          >`min(case when ${run.outcome} = 'won' then ${run.gameTimeMs} end)`,
+          bestWin: bestWinTime,
           games: count(),
           pelletsFired:
             sql<number>`coalesce(sum(${run.pelletsFired}), 0)`.mapWith(Number),
@@ -254,12 +361,22 @@ export const makeRunRepository = (db: DrizzleDb): RunRepositoryShape => {
           totalKills: sql<number>`coalesce(sum(${run.totalKills}), 0)`.mapWith(
             Number
           ),
-          wins: sql<number>`coalesce(sum(case when ${run.outcome} = 'won' then 1 else 0 end), 0)`.mapWith(
-            Number
-          ),
+          wins: winCount,
         })
         .from(run)
         .where(eq(run.userId, userId))
+    );
+    const perSetup = yield* query("statsPerSetup", () =>
+      db
+        .select({
+          bestWin: bestWinTime,
+          games: count(),
+          setupId: run.setupId,
+          wins: winCount,
+        })
+        .from(run)
+        .where(eq(run.userId, userId))
+        .groupBy(run.setupId)
     );
     const [nemesisRow] = yield* query("statsNemesis", () =>
       db
@@ -277,10 +394,21 @@ export const makeRunRepository = (db: DrizzleDb): RunRepositoryShape => {
     const kills = toKillCounts(totals ?? {});
     const stats: UserStats = {
       accuracy: pelletsFired > 0 ? (totals?.pelletsHit ?? 0) / pelletsFired : 0,
-      bestWinGameTimeMs:
-        totals?.bestWin === null || totals?.bestWin === undefined
-          ? null
-          : Number(totals.bestWin),
+      bestWinGameTimeMs: toNullableNumber(totals?.bestWin),
+      // Grouped by stored id, then folded per setup so legacy ids count where findSetup says.
+      difficulties: SETUPS.map((setup): DifficultyStats => {
+        const rows = perSetup.filter(
+          (row) => canonicalSetupId(row.setupId) === setup.id
+        );
+        return {
+          bestWinGameTimeMs: minOrNull(
+            rows.map((row) => toNullableNumber(row.bestWin))
+          ),
+          games: rows.reduce((sum, row) => sum + row.games, 0),
+          setupId: setup.id,
+          wins: rows.reduce((sum, row) => sum + row.wins, 0),
+        };
+      }),
       favouriteVictim: argMax(kills),
       games,
       kills,
@@ -293,9 +421,28 @@ export const makeRunRepository = (db: DrizzleDb): RunRepositoryShape => {
     return stats;
   });
 
-  const leaderboard = Effect.fn("RunRepository.leaderboard")(function* (
-    limit: number = DEFAULT_LEADERBOARD_SIZE
-  ) {
+  /**
+   * Every stored id that means `setupId`: its current id plus any legacy alias that has runs.
+   * Looked up rather than listed here because only `findSetup` knows the aliases; an `in (...)`
+   * list then lets the boards seek the setup index.
+   */
+  const storedIdsMeaning = (setupId: string) =>
+    query("storedSetupIds", () =>
+      db.all<{ setupId: string }>(distinctSetupIdsQuery)
+    ).pipe(
+      Effect.map((rows) =>
+        setupIdsMeaning(
+          setupId,
+          rows.map((row) => row.setupId)
+        )
+      )
+    );
+
+  const leaderboard = Effect.fn("RunRepository.leaderboard")(function* ({
+    limit = DEFAULT_LEADERBOARD_SIZE,
+    setupId,
+  }: LeaderboardQuery) {
+    const onSetup = inArray(run.setupId, yield* storedIdsMeaning(setupId));
     const bestTime = min(run.gameTimeMs);
     const fastestWins = yield* query("fastestWins", () =>
       db
@@ -307,7 +454,7 @@ export const makeRunRepository = (db: DrizzleDb): RunRepositoryShape => {
         })
         .from(run)
         .innerJoin(user, eq(user.id, run.userId))
-        .where(eq(run.outcome, "won"))
+        .where(and(onSetup, eq(run.outcome, "won")))
         .groupBy(run.userId, user.name)
         .orderBy(asc(bestTime))
         .limit(limit)
@@ -324,6 +471,7 @@ export const makeRunRepository = (db: DrizzleDb): RunRepositoryShape => {
         })
         .from(run)
         .innerJoin(user, eq(user.id, run.userId))
+        .where(onSetup)
         .groupBy(run.userId, user.name)
         .having(sql`sum(${run.totalKills}) > 0`)
         .orderBy(desc(killSum))
