@@ -44,7 +44,7 @@ export function StartOverlay({
     <div className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-[rgba(233,242,246,0.72)] px-6 py-10 backdrop-blur-md">
       <div className="flex max-w-2xl animate-[buckshot-rise_300ms_ease-out_both] flex-col items-center gap-7 text-center text-[#0A0C0E]">
         <p className="font-mono text-[11px] text-[rgba(10,12,14,0.55)] uppercase tracking-[0.45em]">
-          {resumed ? "Paused" : "You are the black king"}
+          {resumed ? "Paused" : "You are the king"}
         </p>
         <h1 className="font-black text-[clamp(3.25rem,11vw,8.5rem)] uppercase leading-[0.82] tracking-[-0.04em]">
           Buckshot

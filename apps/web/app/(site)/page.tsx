@@ -1,6 +1,5 @@
 import {
   DEFAULT_PIECE_CATALOG,
-  DEFAULT_PLAYER,
   DEFAULT_SHOTGUN,
   DEFAULT_TIME_POLICY,
   maxTimeScale,
@@ -55,7 +54,7 @@ const CONTROLS = [
   {
     action: "Sprint",
     keys: ["Shift"],
-    note: `${DEFAULT_PLAYER.sprintMultiplier}× speed, but time runs at ${DEFAULT_TIME_POLICY.sprintScale}× — faster than real time.`,
+    note: `${DEFAULT_TIME_POLICY.sprintScale}× speed, and time runs ${DEFAULT_TIME_POLICY.sprintScale}× too — faster than real time.`,
   },
   {
     action: "Aim",
@@ -125,7 +124,7 @@ export default async function HomePage() {
           </p>
           <h1 className="font-black text-[clamp(2.6rem,9vw,7.5rem)] uppercase leading-[0.86] tracking-tighter">
             <span className="block">You are the</span>
-            <span className="block">black king.</span>
+            <span className="block">king.</span>
             <span className="block">
               You have a <span className="text-blood">shotgun.</span>
             </span>
@@ -319,39 +318,6 @@ export default async function HomePage() {
               ))}
             </TableBody>
           </Table>
-        </div>
-      </section>
-
-      <section className="border-white/5 border-t">
-        <div className="mx-auto grid max-w-6xl gap-10 px-4 py-20 sm:px-6 sm:py-28 lg:grid-cols-[1fr_1.4fr]">
-          <SectionHeading kicker="Why I built this">
-            A love
-            <br />
-            letter in
-            <br />
-            buckshot
-          </SectionHeading>
-          <div className="flex flex-col gap-5 text-lg text-muted-foreground leading-relaxed">
-            <p>
-              I have sunk an embarrassing number of hours into three games.{" "}
-              <span className="text-foreground">Shotgun King</span> made chess
-              feel dangerous — a lonely king with a shotgun is the funniest,
-              best idea the genre has ever had.{" "}
-              <span className="text-foreground">FPS Chess</span> put me on the
-              board, staring up at a rook. And{" "}
-              <span className="text-foreground">SUPERHOT</span> taught me that
-              time itself can be a weapon.
-            </p>
-            <p>
-              Buckshot Gambit is what I wanted when I played them: the three
-              ideas in one room. A run lasts a few minutes, every shell matters,
-              and standing perfectly still is a legitimate strategy. If you love
-              any of those games, I hope this feels like a nod across the board.
-            </p>
-            <p className="font-mono text-blood text-sm uppercase tracking-widest">
-              — the developer, black side
-            </p>
-          </div>
         </div>
       </section>
 

@@ -1,6 +1,6 @@
 # Buckshot Gambit
 
-**You are the black king. You have a shotgun. Time only moves when you move.**
+**You are the king. You have a shotgun. Time only moves when you move.**
 
 A first-person 3D chess shooter for the browser. It mixes three games I love:
 
@@ -15,7 +15,7 @@ White pieces shake and flash red before they act. If you are standing on a squar
 | Input | Action |
 | --- | --- |
 | `W` `A` `S` `D` | Move. Time runs while you move. |
-| `Shift` | Sprint: 1.6× speed, and time runs at up to 1.75×, faster than real time. |
+| `Shift` | Sprint: 1.75× speed, and time runs 1.75× too, faster than real time. The clock follows your legs, so the two always match. |
 | Mouse | Aim. Turning the camera also moves time. |
 | Left click | Fire 5 pellets in a flat, wide spread. |
 | `R` | Reload. Adds 1× to the time scale on top of whatever else you're doing. |

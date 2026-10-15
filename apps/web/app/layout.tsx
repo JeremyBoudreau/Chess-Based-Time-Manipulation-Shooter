@@ -12,7 +12,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   description:
-    "You are the black king. You have a shotgun. Time only moves when you move.",
+    "You are the king. You have a shotgun. Time only moves when you move.",
   title: {
     default: "Buckshot Gambit",
     template: "%s · Buckshot Gambit",
