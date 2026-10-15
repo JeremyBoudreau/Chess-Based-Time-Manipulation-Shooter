@@ -18,21 +18,57 @@ const OPEN_CUTOFF_HZ = 18_000;
 /** Skip filter automation unless the cutoff moved by more than this fraction. */
 const CUTOFF_EPSILON = 0.01;
 const FILTER_TIME_CONSTANT = 0.04;
-const MASTER_VOLUME = 0.75;
-const AMBIENT_FROZEN_GAIN = 0.018;
-const AMBIENT_FLOWING_GAIN = 0.07;
+/**
+ * Everything goes into the compressor ~3.5 dB lower than at launch: the gun and the bed were
+ * fatiguing over a run. Sounds loud enough to reach the compressor lose less than that at the
+ * speakers, which is why the loudest ones (the king boom) were also scaled down themselves.
+ */
+export const MASTER_VOLUME = 0.5;
+/**
+ * The ambient bed is the "time is moving" cue: brown noise (wind, not hiss) whose level and
+ * brightness follow the time scale. Quiet when frozen, a little louder and more open when flowing.
+ * The two gains set most of the contrast (0.06 / 0.012 is 14 dB, about what the old hissy bed had);
+ * frozen is the thinking state, so it is the one kept near-silent.
+ */
+const AMBIENT_FROZEN_GAIN = 0.012;
+const AMBIENT_FLOWING_GAIN = 0.06;
 const AMBIENT_TIME_CONSTANT = 0.12;
+/**
+ * Web Audio reads a low/high-pass Q as a resonance in dB; this is Butterworth (flat, no bump below
+ * the cutoff). Anything above it bumps the band just under the cutoff.
+ */
+const BUTTERWORTH_Q_DB = -3.01;
+/**
+ * The bed's own ceiling: well under the hissy band, but high enough that the 500 Hz frozen time
+ * filter still has some wind to take away, so slowing time muffles the bed as well as quietening it.
+ */
+const BED_LOWPASS_HZ = 1200;
+/**
+ * The leaky integrator is flat down to DC, so the brown noise carries sub-sonic wander nobody hears;
+ * this keeps it out of the mix (the drone has its own path and is untouched).
+ */
+const BED_HIGHPASS_HZ = 30;
+/**
+ * A slow swell on the bed so it reads as air moving rather than a constant static. Kept to ±10%
+ * (under ±1 dB) so standing still never swells by as much as a change of time scale would.
+ */
+const BED_BREATH_HZ = 0.13;
+const BED_BREATH_DEPTH = 0.1;
 /**
  * Past real speed (sprinting) the low-pass is already wide open, so the overdrive is heard as an
  * airy rush instead: a band of noise that fades in as time climbs from 1× to `maxTimeScale` (a sprint
  * during a reload).
  */
-const RUSH_MAX_GAIN = 0.045;
-const RUSH_CENTRE_HZ = 2400;
+const RUSH_MAX_GAIN = 0.2;
+const RUSH_CENTRE_HZ = 1100;
 const RUSH_TIME_CONSTANT = 0.18;
 /** Skip rush automation unless its gain moved by more than this (absolute). */
 const RUSH_EPSILON = 0.001;
 const NOISE_SECONDS = 2;
+/** Leak of the brown-noise integrator: lower is darker. */
+const BROWN_LEAK = 0.02;
+/** Brings integrated noise back to roughly unit peak. */
+const BROWN_GAIN = 3.5;
 /** Envelopes ramp from/to this instead of 0 because exponential ramps cannot reach zero. */
 const SILENCE = 0.0001;
 /** Extra seconds a voice is kept connected after its envelope ends. */
@@ -72,11 +108,14 @@ interface NoiseOptions {
   readonly filter: BiquadFilterType;
   readonly freq: number;
   readonly peak: number;
+  /** Linear for a bandpass; in dB for a lowpass/highpass (see `BUTTERWORTH_Q_DB`). */
   readonly q?: number;
 }
 
 interface AudioGraph {
   readonly ambient: GainNode;
+  /** Slow LFO that makes the bed swell and settle. */
+  readonly breath: OscillatorNode;
   readonly compressor: DynamicsCompressorNode;
   readonly ctx: AudioContext;
   /** Player-side sounds (gun, stingers): crisp regardless of time scale. */
@@ -322,53 +361,24 @@ export class GameAudio {
   // --- player sounds (direct bus) -------------------------------------------------------------
 
   private shot(graph: AudioGraph): void {
-    const t = graph.ctx.currentTime;
-    const pitch = random(0.94, 1.06);
-    const out = graph.direct;
-    this.noise(graph, out, t, {
-      attack: 0.001,
-      decay: 0.045,
-      filter: "highpass",
-      freq: 2600,
-      peak: 0.85,
-    });
-    this.noise(graph, out, t, {
-      attack: 0.002,
-      decay: 0.34,
-      endFreq: 520,
-      filter: "lowpass",
-      freq: 5200 * pitch,
-      peak: 0.8,
-      q: 0.9,
-    });
-    this.tone(graph, out, t, {
-      attack: 0.002,
-      decay: 0.26,
-      endFreq: 36,
-      freq: 128 * pitch,
-      peak: 1,
-      type: "sine",
-    });
-    this.noise(graph, out, t + 0.02, {
-      attack: 0.03,
-      decay: 0.95,
-      endFreq: 260,
-      filter: "lowpass",
-      freq: 950,
-      peak: 0.12,
-    });
+    scheduleShot(
+      graph,
+      graph.direct,
+      graph.ctx.currentTime,
+      random(0.94, 1.06)
+    );
   }
 
   private dryFire(graph: AudioGraph): void {
     const t = graph.ctx.currentTime;
-    this.noise(graph, graph.direct, t, {
+    voiceNoise(graph, graph.direct, t, {
       attack: 0.001,
       decay: 0.018,
       filter: "highpass",
       freq: 4200,
       peak: 0.32,
     });
-    this.tone(graph, graph.direct, t, {
+    voiceTone(graph, graph.direct, t, {
       attack: 0.001,
       decay: 0.03,
       freq: 1500,
@@ -376,7 +386,7 @@ export class GameAudio {
       peak: 0.08,
       type: "square",
     });
-    this.tone(graph, graph.direct, t + 0.004, {
+    voiceTone(graph, graph.direct, t + 0.004, {
       attack: 0.001,
       decay: 0.06,
       freq: 2400,
@@ -397,7 +407,7 @@ export class GameAudio {
       Math.min(capacity - world.player.loaded, world.player.reserve)
     );
     this.click(graph, t, 2300, 0.4);
-    this.tone(graph, graph.direct, t + 0.01, {
+    voiceTone(graph, graph.direct, t + 0.01, {
       attack: 0.002,
       decay: 0.1,
       endFreq: 120,
@@ -411,7 +421,7 @@ export class GameAudio {
   }
 
   private shellInsert(graph: AudioGraph, t: number): void {
-    this.noise(graph, graph.direct, t, {
+    voiceNoise(graph, graph.direct, t, {
       attack: 0.01,
       decay: 0.07,
       endFreq: 2100,
@@ -421,7 +431,7 @@ export class GameAudio {
       q: 2,
     });
     this.click(graph, t + 0.075, 1700, 0.3);
-    this.tone(graph, graph.direct, t + 0.075, {
+    voiceTone(graph, graph.direct, t + 0.075, {
       attack: 0.002,
       decay: 0.07,
       freq: 260,
@@ -432,7 +442,7 @@ export class GameAudio {
 
   private snapShut(graph: AudioGraph, t: number): void {
     this.click(graph, t, 2000, 0.55);
-    this.tone(graph, graph.direct, t, {
+    voiceTone(graph, graph.direct, t, {
       attack: 0.002,
       decay: 0.12,
       endFreq: 90,
@@ -443,7 +453,7 @@ export class GameAudio {
   }
 
   private click(graph: AudioGraph, t: number, freq: number, peak: number) {
-    this.noise(graph, graph.direct, t, {
+    voiceNoise(graph, graph.direct, t, {
       attack: 0.001,
       decay: 0.025,
       filter: "bandpass",
@@ -465,7 +475,7 @@ export class GameAudio {
       const at = t + index * 0.065;
       const pitch = random(0.95, 1.05) * (1 + index * 0.08);
       this.click(graph, at, 1800 * pitch, 0.32);
-      this.tone(graph, graph.direct, at, {
+      voiceTone(graph, graph.direct, at, {
         attack: 0.001,
         decay: 0.055,
         endFreq: 210 * pitch,
@@ -475,14 +485,14 @@ export class GameAudio {
       });
     }
     const tick = t + clacks * 0.065 + 0.02;
-    this.tone(graph, graph.direct, tick, {
+    voiceTone(graph, graph.direct, tick, {
       attack: 0.002,
       decay: 0.09,
       freq: 1568,
       peak: 0.09,
       type: "sine",
     });
-    this.tone(graph, graph.direct, tick + 0.012, {
+    voiceTone(graph, graph.direct, tick + 0.012, {
       attack: 0.002,
       decay: 0.07,
       freq: 2349,
@@ -491,31 +501,36 @@ export class GameAudio {
     });
   }
 
+  /**
+   * The biggest event in the game, but scaled to ~0.6 of its launch peaks: at full size it sat in
+   * the compressor, which swallowed most of the master cut and left it 12 dB over the softened gun.
+   * This keeps its old margin over the shot and mostly out of the compressor.
+   */
   private kingCaptured(graph: AudioGraph): void {
     const t = graph.ctx.currentTime;
-    this.tone(graph, graph.direct, t, {
+    voiceTone(graph, graph.direct, t, {
       attack: 0.005,
       decay: 1.5,
       endFreq: 26,
       freq: 92,
-      peak: 0.95,
+      peak: 0.55,
       type: "sine",
     });
-    this.noise(graph, graph.direct, t, {
+    voiceNoise(graph, graph.direct, t, {
       attack: 0.004,
       decay: 1.2,
       endFreq: 70,
       filter: "lowpass",
       freq: 420,
-      peak: 0.5,
+      peak: 0.3,
     });
-    this.tone(graph, graph.direct, t + 0.08, {
+    voiceTone(graph, graph.direct, t + 0.08, {
       attack: 0.02,
       decay: 1.7,
       endFreq: 98,
       freq: 392,
       lowpass: 1400,
-      peak: 0.14,
+      peak: 0.09,
       type: "sawtooth",
     });
   }
@@ -525,14 +540,14 @@ export class GameAudio {
     const chord = [523.25, 659.25, 783.99, 987.77, 1318.51];
     for (const [index, freq] of chord.entries()) {
       const start = t + index * 0.035;
-      this.tone(graph, graph.direct, start, {
+      voiceTone(graph, graph.direct, start, {
         attack: 0.01,
         decay: 2.4,
         freq,
         peak: 0.09,
         type: "triangle",
       });
-      this.tone(graph, graph.direct, start, {
+      voiceTone(graph, graph.direct, start, {
         attack: 0.01,
         decay: 1.6,
         freq: freq * 2,
@@ -547,7 +562,7 @@ export class GameAudio {
   private telegraph(graph: AudioGraph, world: WorldState, pieceId: string) {
     const piece = findPiece(world, pieceId);
     const out = this.spatial(graph, world, piece?.square ?? null, 1, 0.2);
-    this.tone(graph, out, graph.ctx.currentTime, {
+    voiceTone(graph, out, graph.ctx.currentTime, {
       attack: 0.004,
       decay: 0.08,
       endFreq: 1240,
@@ -568,7 +583,7 @@ export class GameAudio {
     const out = this.spatial(graph, world, to, loudness, 0.25);
     const t = graph.ctx.currentTime;
     const pitch = random(0.9, 1.1);
-    this.noise(graph, out, t, {
+    voiceNoise(graph, out, t, {
       attack: 0.001,
       decay: 0.05,
       filter: "bandpass",
@@ -576,7 +591,7 @@ export class GameAudio {
       peak: 0.5,
       q: 3,
     });
-    this.tone(graph, out, t, {
+    voiceTone(graph, out, t, {
       attack: 0.001,
       decay: 0.07,
       endFreq: 200 * pitch,
@@ -584,7 +599,7 @@ export class GameAudio {
       peak: 0.35,
       type: "triangle",
     });
-    this.tone(graph, out, t + 0.004, {
+    voiceTone(graph, out, t + 0.004, {
       attack: 0.002,
       decay: 0.1,
       freq: 120 * pitch,
@@ -593,6 +608,11 @@ export class GameAudio {
     });
   }
 
+  /**
+   * One thud per pellet that lands, so a point-blank blast stacks all five within a frame or two.
+   * Each is kept soft enough that the five-pellet stack sits a few dB under the gun rather than
+   * outweighing it.
+   */
   private pieceHit(
     graph: AudioGraph,
     world: WorldState,
@@ -605,35 +625,40 @@ export class GameAudio {
     const freq = (170 + wounded * 130) * random(0.9, 1.12);
     const out = this.spatial(graph, world, square, 1, 0.2);
     const t = graph.ctx.currentTime;
-    this.tone(graph, out, t, {
+    voiceTone(graph, out, t, {
       attack: 0.002,
       decay: 0.13,
       endFreq: freq * 0.55,
       freq,
-      peak: 0.55,
+      peak: 0.3,
       type: "sine",
     });
-    this.noise(graph, out, t, {
+    voiceNoise(graph, out, t, {
       attack: 0.001,
       decay: 0.05,
       filter: "lowpass",
       freq: 900,
-      peak: 0.3,
+      peak: 0.16,
     });
   }
 
+  /**
+   * The glassy shatter is the reward for a kill, but a close kill lands ~0.1 s after the shot, so it
+   * must not bring back the bright crack the gun gave up: its noise fades in over 3 ms and the hiss
+   * and pings are kept low.
+   */
   private pieceKilled(graph: AudioGraph, world: WorldState, square: Square) {
     const out = this.spatial(graph, world, square, 1, 0.8);
     const t = graph.ctx.currentTime;
-    this.noise(graph, out, t, {
-      attack: 0.001,
+    voiceNoise(graph, out, t, {
+      attack: 0.003,
       decay: 0.45,
       filter: "highpass",
       freq: 3000,
-      peak: 0.32,
+      peak: 0.15,
     });
-    this.noise(graph, out, t, {
-      attack: 0.001,
+    voiceNoise(graph, out, t, {
+      attack: 0.003,
       decay: 0.28,
       endFreq: 1800,
       filter: "bandpass",
@@ -643,11 +668,11 @@ export class GameAudio {
     });
     const pings = 4 + Math.floor(Math.random() * 3);
     for (let index = 0; index < pings; index += 1) {
-      this.tone(graph, out, t + random(0, 0.12), {
+      voiceTone(graph, out, t + random(0, 0.12), {
         attack: 0.002,
         decay: random(0.25, 0.6),
         freq: random(2200, 6200),
-        peak: random(0.05, 0.11),
+        peak: random(0.025, 0.055),
         type: "sine",
       });
     }
@@ -660,7 +685,7 @@ export class GameAudio {
   private pickupLanded(graph: AudioGraph, world: WorldState, square: Square) {
     const out = this.spatial(graph, world, square, 0.55, 0.25);
     const t = graph.ctx.currentTime;
-    this.tone(graph, out, t, {
+    voiceTone(graph, out, t, {
       attack: 0.003,
       decay: 0.12,
       endFreq: 62,
@@ -668,7 +693,7 @@ export class GameAudio {
       peak: 0.32,
       type: "sine",
     });
-    this.noise(graph, out, t, {
+    voiceNoise(graph, out, t, {
       attack: 0.002,
       decay: 0.06,
       endFreq: 260,
@@ -676,7 +701,7 @@ export class GameAudio {
       freq: 900,
       peak: 0.2,
     });
-    this.tone(graph, out, t + 0.06, {
+    voiceTone(graph, out, t + 0.06, {
       attack: 0.001,
       decay: 0.04,
       freq: 2100,
@@ -689,7 +714,7 @@ export class GameAudio {
   private pickupCrushed(graph: AudioGraph, world: WorldState, square: Square) {
     const out = this.spatial(graph, world, square, 1, 0.2);
     const t = graph.ctx.currentTime;
-    this.noise(graph, out, t, {
+    voiceNoise(graph, out, t, {
       attack: 0.001,
       decay: 0.1,
       endFreq: 380,
@@ -698,7 +723,7 @@ export class GameAudio {
       peak: 0.42,
       q: 1.2,
     });
-    this.tone(graph, out, t, {
+    voiceTone(graph, out, t, {
       attack: 0.001,
       decay: 0.08,
       endFreq: 48,
@@ -708,7 +733,7 @@ export class GameAudio {
     });
     const grains = 3 + Math.floor(Math.random() * 3);
     for (let index = 0; index < grains; index += 1) {
-      this.noise(graph, out, t + random(0, 0.07), {
+      voiceNoise(graph, out, t + random(0, 0.07), {
         attack: 0.001,
         decay: random(0.008, 0.02),
         filter: "bandpass",
@@ -723,14 +748,14 @@ export class GameAudio {
     const piece = findPiece(world, pieceId);
     const out = this.spatial(graph, world, piece?.square ?? null, 1, 0.5);
     const t = graph.ctx.currentTime;
-    this.tone(graph, out, t, {
+    voiceTone(graph, out, t, {
       attack: 0.005,
       decay: 0.25,
       freq: 660,
       peak: 0.12,
       type: "sine",
     });
-    this.tone(graph, out, t + 0.09, {
+    voiceTone(graph, out, t + 0.09, {
       attack: 0.005,
       decay: 0.35,
       freq: 990,
@@ -777,70 +802,6 @@ export class GameAudio {
       gain.disconnect();
     });
     return panner;
-  }
-
-  private tone(
-    graph: AudioGraph,
-    out: AudioNode,
-    t: number,
-    options: ToneOptions
-  ): void {
-    const { ctx } = graph;
-    const end = t + options.attack + options.decay;
-    const osc = ctx.createOscillator();
-    osc.type = options.type;
-    osc.frequency.setValueAtTime(options.freq, t);
-    if (options.endFreq !== undefined) {
-      osc.frequency.exponentialRampToValueAtTime(options.endFreq, end);
-    }
-    const gain = ctx.createGain();
-    envelope(gain.gain, t, options.peak, options.attack, options.decay);
-    let head: AudioNode = osc;
-    let filter: BiquadFilterNode | null = null;
-    if (options.lowpass !== undefined) {
-      filter = ctx.createBiquadFilter();
-      filter.type = "lowpass";
-      filter.frequency.value = options.lowpass;
-      head = osc.connect(filter);
-    }
-    head.connect(gain).connect(out);
-    osc.onended = () => {
-      osc.disconnect();
-      filter?.disconnect();
-      gain.disconnect();
-    };
-    osc.start(t);
-    osc.stop(end + VOICE_TAIL);
-  }
-
-  private noise(
-    graph: AudioGraph,
-    out: AudioNode,
-    t: number,
-    options: NoiseOptions
-  ): void {
-    const { ctx } = graph;
-    const end = t + options.attack + options.decay;
-    const source = ctx.createBufferSource();
-    source.buffer = graph.noise;
-    const filter = ctx.createBiquadFilter();
-    filter.type = options.filter;
-    filter.frequency.setValueAtTime(options.freq, t);
-    if (options.endFreq !== undefined) {
-      filter.frequency.exponentialRampToValueAtTime(options.endFreq, end);
-    }
-    filter.Q.value = options.q ?? 0.7;
-    const gain = ctx.createGain();
-    envelope(gain.gain, t, options.peak, options.attack, options.decay);
-    source.connect(filter).connect(gain).connect(out);
-    source.onended = () => {
-      source.disconnect();
-      filter.disconnect();
-      gain.disconnect();
-    };
-    const maxOffset = Math.max(0, NOISE_SECONDS - (end - t) - VOICE_TAIL);
-    source.start(t, Math.random() * maxOffset);
-    source.stop(end + VOICE_TAIL);
   }
 
   private later(seconds: number, run: () => void): void {
@@ -906,11 +867,303 @@ const createNoiseBuffer = (ctx: AudioContext): AudioBuffer => {
   return buffer;
 };
 
+/** What a voice needs: any live or offline context, and the shared white-noise buffer. */
+export interface SynthTarget {
+  readonly ctx: BaseAudioContext;
+  readonly noise: AudioBuffer;
+}
+
+/** One enveloped oscillator, optionally gliding to `endFreq` and low-passed; frees itself when done. */
+export const voiceTone = (
+  target: SynthTarget,
+  out: AudioNode,
+  t: number,
+  options: ToneOptions
+): void => {
+  const { ctx } = target;
+  const end = t + options.attack + options.decay;
+  const osc = ctx.createOscillator();
+  osc.type = options.type;
+  osc.frequency.setValueAtTime(options.freq, t);
+  if (options.endFreq !== undefined) {
+    osc.frequency.exponentialRampToValueAtTime(options.endFreq, end);
+  }
+  const gain = ctx.createGain();
+  envelope(gain.gain, t, options.peak, options.attack, options.decay);
+  let head: AudioNode = osc;
+  let filter: BiquadFilterNode | null = null;
+  if (options.lowpass !== undefined) {
+    filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = options.lowpass;
+    head = osc.connect(filter);
+  }
+  head.connect(gain).connect(out);
+  osc.onended = () => {
+    osc.disconnect();
+    filter?.disconnect();
+    gain.disconnect();
+  };
+  osc.start(t);
+  osc.stop(end + VOICE_TAIL);
+};
+
+/** One enveloped burst of filtered noise, optionally sweeping to `endFreq`; frees itself when done. */
+export const voiceNoise = (
+  target: SynthTarget,
+  out: AudioNode,
+  t: number,
+  options: NoiseOptions
+): void => {
+  const { ctx } = target;
+  const end = t + options.attack + options.decay;
+  const source = ctx.createBufferSource();
+  source.buffer = target.noise;
+  const filter = ctx.createBiquadFilter();
+  filter.type = options.filter;
+  filter.frequency.setValueAtTime(options.freq, t);
+  if (options.endFreq !== undefined) {
+    filter.frequency.exponentialRampToValueAtTime(options.endFreq, end);
+  }
+  filter.Q.value = options.q ?? 0.7;
+  const gain = ctx.createGain();
+  envelope(gain.gain, t, options.peak, options.attack, options.decay);
+  source.connect(filter).connect(gain).connect(out);
+  source.onended = () => {
+    source.disconnect();
+    filter.disconnect();
+    gain.disconnect();
+  };
+  const maxOffset = Math.max(0, NOISE_SECONDS - (end - t) - VOICE_TAIL);
+  source.start(t, Math.random() * maxOffset);
+  source.stop(end + VOICE_TAIL);
+};
+
+/** One layer of a layered sound: a noise burst or a tone, optionally delayed and pitch-tracked. */
+export type SoundLayer =
+  | {
+      readonly delay?: number;
+      readonly kind: "noise";
+      readonly options: NoiseOptions;
+      readonly pitched?: boolean;
+    }
+  | {
+      readonly delay?: number;
+      readonly kind: "tone";
+      readonly options: ToneOptions;
+      readonly pitched?: boolean;
+    };
+
+/**
+ * The shotgun, built to be felt rather than to sting: every layer fades in over a few
+ * milliseconds (no click), the noise body starts dark (2.4 kHz) and sweeps down, the thump carries
+ * the weight, and a long low tail gives it room. No high-passed crack.
+ *
+ * Laptop speakers play almost nothing under ~200 Hz, so the weight cannot live in the sub alone:
+ * the thump starts at 170 Hz before it falls, and the body is the loudest noise layer (its slight
+ * 0.6 dB resonance riding the sweep helps it read there too). It still drives the master
+ * compressor: it peaks ~7 dB over the -14 dB threshold, takes ~6 dB of gain reduction and briefly
+ * ducks the bed. The old shot went in ~8 dB hotter.
+ */
+export const SHOT_LAYERS: readonly SoundLayer[] = [
+  {
+    kind: "noise",
+    options: {
+      attack: 0.004,
+      decay: 0.06,
+      filter: "bandpass",
+      freq: 1600,
+      peak: 0.12,
+      q: 0.8,
+    },
+  },
+  {
+    kind: "noise",
+    options: {
+      attack: 0.006,
+      decay: 0.3,
+      endFreq: 260,
+      filter: "lowpass",
+      freq: 2400,
+      peak: 0.7,
+      q: 0.6,
+    },
+    pitched: true,
+  },
+  {
+    kind: "tone",
+    options: {
+      attack: 0.006,
+      decay: 0.3,
+      endFreq: 42,
+      freq: 170,
+      peak: 0.7,
+      type: "sine",
+    },
+    pitched: true,
+  },
+  {
+    delay: 0.02,
+    kind: "noise",
+    options: {
+      attack: 0.05,
+      decay: 0.85,
+      endFreq: 180,
+      filter: "lowpass",
+      freq: 700,
+      peak: 0.07,
+    },
+  },
+];
+
+/** Plays a layered sound at `t`; pitched layers start at `freq × pitch` (endFreq is left alone). */
+export const scheduleLayers = (
+  target: SynthTarget,
+  out: AudioNode,
+  t: number,
+  pitch: number,
+  layers: readonly SoundLayer[]
+): void => {
+  for (const layer of layers) {
+    const start = t + (layer.delay ?? 0);
+    const freq = layer.options.freq * (layer.pitched ? pitch : 1);
+    if (layer.kind === "noise") {
+      voiceNoise(target, out, start, { ...layer.options, freq });
+    } else {
+      voiceTone(target, out, start, { ...layer.options, freq });
+    }
+  }
+};
+
+export const scheduleShot = (
+  target: SynthTarget,
+  out: AudioNode,
+  t: number,
+  pitch: number
+): void => scheduleLayers(target, out, t, pitch, SHOT_LAYERS);
+
+/**
+ * Brown (leaky-integrated) noise that loops seamlessly: most of its energy is low, so it sounds
+ * like wind rather than hiss. Integrated noise wanders, so its last sample rarely matches its first
+ * and a looped buffer would tick once per loop; removing the straight line from first to last
+ * sample closes that gap without audibly changing the colour. The integrator starts at 0, so the
+ * result is then re-centred on its mean (both ends move together, so the loop stays seamless):
+ * otherwise it keeps a DC offset as large as the noise itself, which only wastes headroom.
+ */
+export const brownNoise = (
+  length: number,
+  nextRandom: () => number = Math.random
+): Float32Array<ArrayBuffer> => {
+  const data = new Float32Array(length);
+  let last = 0;
+  for (let index = 0; index < length; index += 1) {
+    last = (last + BROWN_LEAK * (nextRandom() * 2 - 1)) / (1 + BROWN_LEAK);
+    data[index] = last * BROWN_GAIN;
+  }
+  const first = data[0] ?? 0;
+  const drift = (data[length - 1] ?? 0) - first;
+  const span = Math.max(1, length - 1);
+  let sum = 0;
+  for (let index = 0; index < length; index += 1) {
+    const value = (data[index] ?? 0) - first - (drift * index) / span;
+    data[index] = value;
+    sum += value;
+  }
+  const mean = length > 0 ? sum / length : 0;
+  for (let index = 0; index < length; index += 1) {
+    data[index] = (data[index] ?? 0) - mean;
+  }
+  return data;
+};
+
+const createBrownNoiseBuffer = (ctx: BaseAudioContext): AudioBuffer => {
+  const length = Math.floor(ctx.sampleRate * NOISE_SECONDS);
+  const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+  buffer.copyToChannel(brownNoise(length), 0);
+  return buffer;
+};
+
+export interface TimeBeds {
+  readonly breath: OscillatorNode;
+  readonly drones: readonly OscillatorNode[];
+  readonly noiseBed: AudioBufferSourceNode;
+  readonly rushBed: AudioBufferSourceNode;
+}
+
+/**
+ * The continuous "time is moving" sound, started immediately: a breathing brown-noise wind with a
+ * soft 55/82 Hz drone into `ambient`, and a separate low whoosh into `rush` for faster-than-real
+ * time. The caller's gains (and time filter) decide how much of each is heard.
+ */
+export const createTimeBeds = (
+  ctx: BaseAudioContext,
+  ambient: AudioNode,
+  rush: AudioNode
+): TimeBeds => {
+  const brown = createBrownNoiseBuffer(ctx);
+
+  const breathGain = ctx.createGain();
+  breathGain.gain.value = 1;
+  breathGain.connect(ambient);
+  const breath = ctx.createOscillator();
+  breath.frequency.value = BED_BREATH_HZ;
+  const breathDepth = ctx.createGain();
+  breathDepth.gain.value = BED_BREATH_DEPTH;
+  breath.connect(breathDepth).connect(breathGain.gain);
+  breath.start();
+
+  const bedFilter = ctx.createBiquadFilter();
+  bedFilter.type = "lowpass";
+  bedFilter.frequency.value = BED_LOWPASS_HZ;
+  bedFilter.Q.value = BUTTERWORTH_Q_DB;
+  bedFilter.connect(breathGain);
+  const subsonicFilter = ctx.createBiquadFilter();
+  subsonicFilter.type = "highpass";
+  subsonicFilter.frequency.value = BED_HIGHPASS_HZ;
+  subsonicFilter.Q.value = BUTTERWORTH_Q_DB;
+  subsonicFilter.connect(bedFilter);
+  const noiseBed = ctx.createBufferSource();
+  noiseBed.buffer = brown;
+  noiseBed.loop = true;
+  noiseBed.connect(subsonicFilter);
+  noiseBed.start();
+
+  // Its own looping source, started half a buffer in, so it never correlates with the bed above.
+  const rushFilter = ctx.createBiquadFilter();
+  rushFilter.type = "bandpass";
+  rushFilter.frequency.value = RUSH_CENTRE_HZ;
+  rushFilter.Q.value = 0.7;
+  rushFilter.connect(rush);
+  const rushBed = ctx.createBufferSource();
+  rushBed.buffer = brown;
+  rushBed.loop = true;
+  rushBed.connect(rushFilter);
+  rushBed.start(0, NOISE_SECONDS / 2);
+
+  const droneGain = ctx.createGain();
+  droneGain.gain.value = 0.35;
+  droneGain.connect(ambient);
+  const drones = [
+    { detune: -6, freq: 55 },
+    { detune: 5, freq: 82.4 },
+  ].map(({ detune, freq }) => {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    osc.detune.value = detune;
+    osc.connect(droneGain);
+    osc.start();
+    return osc;
+  });
+
+  return { breath, drones, noiseBed, rushBed };
+};
+
 /**
  * direct ─────────────────────────────┐
  * world ──┐                           ├─ master ───────── compressor ─ speakers
- * ambient ┼─ timeFilter (follows time)┘
- * rush ───┘  (sprint overdrive only)
+ * ambient ┼─ timeFilter (follows time)┘   (ambient: breathing brown-noise wind + drone)
+ * rush ───┘  (faster-than-real time only)
  */
 const createGraph = (): AudioGraph => {
   const ctx = new AudioContext({ latencyHint: "interactive" });
@@ -944,50 +1197,19 @@ const createGraph = (): AudioGraph => {
   ambient.gain.value = 0;
   ambient.connect(timeFilter);
 
-  const bedFilter = ctx.createBiquadFilter();
-  bedFilter.type = "bandpass";
-  bedFilter.frequency.value = 650;
-  bedFilter.Q.value = 0.6;
-  bedFilter.connect(ambient);
-  const noiseBed = ctx.createBufferSource();
-  noiseBed.buffer = noise;
-  noiseBed.loop = true;
-  noiseBed.connect(bedFilter);
-  noiseBed.start();
-
-  // Its own looping source, started half a buffer in, so it never correlates with the bed above.
   const rush = ctx.createGain();
   rush.gain.value = 0;
   rush.connect(timeFilter);
-  const rushFilter = ctx.createBiquadFilter();
-  rushFilter.type = "bandpass";
-  rushFilter.frequency.value = RUSH_CENTRE_HZ;
-  rushFilter.Q.value = 0.45;
-  rushFilter.connect(rush);
-  const rushBed = ctx.createBufferSource();
-  rushBed.buffer = noise;
-  rushBed.loop = true;
-  rushBed.connect(rushFilter);
-  rushBed.start(0, NOISE_SECONDS / 2);
 
-  const droneGain = ctx.createGain();
-  droneGain.gain.value = 0.35;
-  droneGain.connect(ambient);
-  const drones = [
-    { detune: -6, freq: 55, type: "sine" as const },
-    { detune: 5, freq: 82.4, type: "triangle" as const },
-  ].map(({ detune, freq, type }) => {
-    const osc = ctx.createOscillator();
-    osc.type = type;
-    osc.frequency.value = freq;
-    osc.detune.value = detune;
-    osc.connect(droneGain);
-    osc.start();
-    return osc;
-  });
+  const { breath, drones, noiseBed, rushBed } = createTimeBeds(
+    ctx,
+    ambient,
+    rush
+  );
 
   return {
     ambient,
+    breath,
     compressor,
     ctx,
     direct,
