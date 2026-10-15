@@ -9,7 +9,7 @@ import {
 import { isOnBoard, squareAt, squareCenter } from "../geometry";
 import { mulberry32 } from "../random";
 import { moveTravel, squaresPassed } from "../rules";
-import { SKIRMISH_SETUP, squareName } from "../setups";
+import { EASY_SETUP, squareName } from "../setups";
 import { createSimulation, createWorld, stepWorld } from "../simulation";
 import { maxTimeScale, targetTimeScale } from "../time";
 import type { GameEvent, PieceState, Square, WorldState } from "../types";
@@ -35,7 +35,7 @@ const SPRINT = frame({ moveX: 1, sprint: true });
 const NO_SPAWNS = { initialPickups: 0, spawnInterval: 1e6 } as const;
 
 const skirmishWhite = () =>
-  SKIRMISH_SETUP.white.map(
+  EASY_SETUP.white.map(
     (entry) => [entry.kind, squareName(entry.square)] as const
   );
 
@@ -85,7 +85,7 @@ const types = (events: readonly GameEvent[]) =>
 describe("createWorld", () => {
   test("starts the player on the setup square facing White with a full gun", () => {
     const config = makeConfig({
-      white: SKIRMISH_SETUP.white.map(
+      white: EASY_SETUP.white.map(
         (entry) => [entry.kind, squareName(entry.square)] as const
       ),
     });

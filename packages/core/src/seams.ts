@@ -7,7 +7,7 @@
  *
  * Future features plug in here rather than in the simulation:
  *   - upgrades / classes      → a different `Loadout` layer (weapon, legs, ammo economy)
- *   - variable white armies   → more entries in `SetupRegistry`
+ *   - variable white armies   → more entries in `SetupRegistry` (Easy / Medium / Hard live there)
  *   - difficulty / run modifiers → `PieceCatalog` + `TimePolicy` layers per run floor
  *   - smarter enemies         → a different `PieceBrain`
  */
@@ -21,7 +21,7 @@ import {
   DEFAULT_TIME_POLICY,
 } from "./config";
 import { mulberry32 } from "./random";
-import { SETUPS, SKIRMISH_SETUP } from "./setups";
+import { DEFAULT_SETUP, findSetup, SETUPS } from "./setups";
 import { createSimulation, type Simulation } from "./simulation";
 import { type TimeSignals, targetTimeScale } from "./time";
 import type {
@@ -83,7 +83,7 @@ export class Loadout extends Context.Service<
   });
 }
 
-/** Seam: available white armies. */
+/** Seam: available white armies — one per difficulty. */
 export class SetupRegistry extends Context.Service<
   SetupRegistry,
   {
@@ -95,7 +95,7 @@ export class SetupRegistry extends Context.Service<
 >()("@buckshot/core/SetupRegistry") {
   static readonly Default = Layer.succeed(SetupRegistry, {
     get: (id: string) => {
-      const setup = SETUPS.find((candidate) => candidate.id === id);
+      const setup = findSetup(id);
       return setup
         ? Effect.succeed(setup)
         : Effect.fail(new UnknownSetupError({ setupId: id }));
@@ -162,7 +162,7 @@ export class GameFactory extends Context.Service<
         Effect.gen(function* () {
           const setup = options.setupId
             ? yield* setups.get(options.setupId)
-            : SKIRMISH_SETUP;
+            : DEFAULT_SETUP;
           const config: GameConfig = {
             pickups: loadout.pickups,
             pieces: catalog.all,
