@@ -1,7 +1,6 @@
 {
   "extends": "@buckshot/tsconfig/nextjs.json",
   "compilerOptions": {
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./*"],
       "@buckshot/ui/*": ["../../packages/ui/src/*"]
