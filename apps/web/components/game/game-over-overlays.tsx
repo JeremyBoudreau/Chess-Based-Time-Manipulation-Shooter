@@ -1,9 +1,8 @@
 "use client";
 
-import type { PieceKind, RunResult } from "@buckshot/core";
+import type { PieceKind } from "@buckshot/core";
 import { useEffect, useRef, useState } from "react";
-import { ResultsCard } from "./results-card";
-import type { SaveStatus } from "./use-run-saver";
+import { ResultsCard, type ResultsCardProps } from "./results-card";
 
 /** Seconds of CHECK/MATE alternation before the results card: 6 beats × 0.85 s ≈ 5 s. */
 const CHANT_BEATS = 6;
@@ -19,12 +18,10 @@ const SKIP_POINTER_GRACE_MS = 400;
 
 const GLOW = "0 0 12px #7FE7FF, 0 0 36px rgba(127, 231, 255, 0.55)";
 
-interface GameOverOverlayProps {
-  readonly onPlayAgain: () => void;
+/** Everything the results card needs, plus the reveal hook; the card props pass straight through. */
+interface GameOverOverlayProps extends ResultsCardProps {
   /** Called once when the results card appears (the client then frees the cursor). */
   readonly onReveal: () => void;
-  readonly result: RunResult;
-  readonly saveStatus: SaveStatus;
 }
 
 function RestartHint() {
@@ -40,12 +37,7 @@ function RestartHint() {
  * alternation over a dimmed, blue-tinted, blurred scene, then the results card. Enter/Space/Escape,
  * or a click after a short grace, skips the chant.
  */
-export function WinOverlay({
-  onPlayAgain,
-  onReveal,
-  result,
-  saveStatus,
-}: GameOverOverlayProps) {
+export function WinOverlay({ onReveal, ...card }: GameOverOverlayProps) {
   const [beat, setBeat] = useState(0);
   const mountedAt = useRef(performance.now());
   const revealed = beat >= CHANT_BEATS;
@@ -94,11 +86,7 @@ export function WinOverlay({
           >
             Check<span className="font-thin">mate</span>
           </h2>
-          <ResultsCard
-            onPlayAgain={onPlayAgain}
-            result={result}
-            saveStatus={saveStatus}
-          />
+          <ResultsCard {...card} />
           <RestartHint />
         </>
       ) : (
@@ -125,10 +113,8 @@ export function WinOverlay({
  */
 export function LossOverlay({
   killedBy,
-  onPlayAgain,
   onReveal,
-  result,
-  saveStatus,
+  ...card
 }: GameOverOverlayProps & { readonly killedBy: PieceKind | null }) {
   const [revealed, setRevealed] = useState(false);
 
@@ -161,11 +147,7 @@ export function LossOverlay({
           </p>
         ) : null}
       </div>
-      <ResultsCard
-        onPlayAgain={onPlayAgain}
-        result={result}
-        saveStatus={saveStatus}
-      />
+      <ResultsCard {...card} />
       <RestartHint />
     </div>
   );

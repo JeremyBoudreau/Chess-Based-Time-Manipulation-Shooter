@@ -1,8 +1,21 @@
 import type { PieceKind, RunResult } from "@buckshot/core";
 import { Button } from "@buckshot/ui/components/button";
 import Link from "next/link";
-import { accuracyOf, formatGameTime, formatPercent } from "@/lib/format";
+import { useCallback } from "react";
+import {
+  accuracyOf,
+  capitalize,
+  formatGameTime,
+  formatPercent,
+} from "@/lib/format";
 import { PIECE_GLYPHS } from "@/lib/pieces";
+import {
+  armySizeLabel,
+  type DifficultyOption,
+  difficultyHref,
+  findDifficulty,
+  signInHref,
+} from "./difficulty";
 import type { SaveStatus } from "./use-run-saver";
 
 const MS_PER_SECOND = 1000;
@@ -52,13 +65,19 @@ function Stat({
   );
 }
 
-function SaveLine({ status }: { readonly status: SaveStatus }) {
+function SaveLine({
+  setupId,
+  status,
+}: {
+  readonly setupId: string;
+  readonly status: SaveStatus;
+}) {
   if (status.kind === "signed-out") {
     return (
       <p className="text-[rgba(10,12,14,0.65)] text-sm">
         <Link
           className="font-semibold text-[#E80C0C] underline-offset-4 hover:underline"
-          href="/sign-in"
+          href={signInHref(setupId)}
         >
           Sign in to save your runs
         </Link>{" "}
@@ -79,21 +98,73 @@ function SaveLine({ status }: { readonly status: SaveStatus }) {
   );
 }
 
+/** Which army this run was against: "Hard · 16 pieces — full army". */
+function DifficultyLine({
+  option,
+  setupId,
+}: {
+  readonly option: DifficultyOption | undefined;
+  readonly setupId: string;
+}) {
+  return (
+    <p className="mb-5 font-mono text-[11px] text-[rgba(10,12,14,0.6)] uppercase tracking-[0.3em]">
+      <span className="font-black text-[#0A0C0E]">
+        {option?.name ?? capitalize(setupId)}
+      </span>
+      {option ? ` · ${armySizeLabel(option)}` : null}
+    </p>
+  );
+}
+
+/** "Try Hard": restart on another difficulty straight from the results. */
+function TryDifficultyButton({
+  onSwitch,
+  option,
+}: {
+  readonly onSwitch: (id: string) => void;
+  readonly option: DifficultyOption;
+}) {
+  const handleClick = useCallback(
+    () => onSwitch(option.id),
+    [onSwitch, option.id]
+  );
+  return (
+    <Button
+      className="h-8 rounded-none border border-[rgba(10,12,14,0.25)] bg-transparent px-3 font-mono font-semibold text-[#0A0C0E] text-[11px] uppercase tracking-[0.2em] hover:bg-[rgba(10,12,14,0.06)]"
+      onClick={handleClick}
+      title={`${armySizeLabel(option)}: ${option.description}`}
+      type="button"
+    >
+      Try {option.name}
+    </Button>
+  );
+}
+
 export interface ResultsCardProps {
+  readonly difficulties: readonly DifficultyOption[];
   readonly onPlayAgain: () => void;
+  /** Start a fresh run on another difficulty. */
+  readonly onSwitchDifficulty: (id: string) => void;
   readonly result: RunResult;
   readonly saveStatus: SaveStatus;
 }
 
-/** Post-run stats with the three ways out: again, leaderboard, home. Shared by win and loss. */
+/**
+ * Post-run stats with the ways out: again (same difficulty), another difficulty, leaderboard,
+ * home. Shared by win and loss.
+ */
 export function ResultsCard({
+  difficulties,
   onPlayAgain,
+  onSwitchDifficulty,
   result,
   saveStatus,
 }: ResultsCardProps) {
   const personalBest = saveStatus.kind === "saved" && saveStatus.personalBest;
   const kills = totalKills(result);
   const killedKinds = PIECE_ORDER.filter((kind) => result.kills[kind] > 0);
+  const played = findDifficulty(difficulties, result.setupId);
+  const others = difficulties.filter((option) => option !== played);
   return (
     <section
       aria-label="Run results"
@@ -104,6 +175,7 @@ export function ResultsCard({
           Personal best
         </span>
       ) : null}
+      <DifficultyLine option={played} setupId={result.setupId} />
       <dl className="grid grid-cols-2 gap-x-8 gap-y-5">
         <Stat label="Game time" value={formatGameTime(result.gameTimeMs)} />
         <Stat label="Real time" value={formatRealTime(result.realTimeMs)} />
@@ -131,7 +203,7 @@ export function ResultsCard({
         </ul>
       ) : null}
       <div className="mt-5 border-[rgba(10,12,14,0.12)] border-t pt-4">
-        <SaveLine status={saveStatus} />
+        <SaveLine setupId={result.setupId} status={saveStatus} />
       </div>
       <div className="mt-5 flex flex-wrap gap-2">
         <Button
@@ -145,7 +217,9 @@ export function ResultsCard({
           asChild
           className="h-11 rounded-none border border-[rgba(10,12,14,0.25)] bg-transparent font-semibold text-[#0A0C0E] uppercase tracking-[0.2em] hover:bg-[rgba(10,12,14,0.06)]"
         >
-          <Link href="/leaderboard">Leaderboard</Link>
+          <Link href={difficultyHref("/leaderboard", result.setupId)}>
+            Leaderboard
+          </Link>
         </Button>
         <Button
           asChild
@@ -154,6 +228,17 @@ export function ResultsCard({
           <Link href="/">Home</Link>
         </Button>
       </div>
+      {others.length > 0 ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {others.map((option) => (
+            <TryDifficultyButton
+              key={option.id}
+              onSwitch={onSwitchDifficulty}
+              option={option}
+            />
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }

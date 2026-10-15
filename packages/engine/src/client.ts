@@ -1,4 +1,5 @@
 import {
+  type CreateGameOptions,
   IDLE_INPUT,
   type RunResult,
   type Simulation,
@@ -21,6 +22,10 @@ const MAX_PIXEL_RATIO = 2;
  */
 const RESTART_GRACE_MS = 800;
 
+/** No id means "core's default setup", so the option is left out rather than sent as undefined. */
+const gameOptions = (setupId: string | undefined): CreateGameOptions =>
+  setupId ? { setupId } : {};
+
 export interface GameClientOptions {
   readonly canvas: HTMLCanvasElement;
   /** Element whose size drives the renderer (observed with a ResizeObserver). */
@@ -33,6 +38,15 @@ export interface GameClientOptions {
   readonly onGameOver?: (result: RunResult) => void;
   /** A pointer-lock request was refused (e.g. re-clicking too soon after Escape). */
   readonly onLockError?: () => void;
+  /**
+   * Setup (difficulty) to start on; core's default setup when omitted. Only the first game uses
+   * it: `restart({ setupId })` switches, and every later restart keeps the latest choice.
+   */
+  readonly setupId?: string;
+}
+
+export interface RestartOptions {
+  /** Switch to this setup (difficulty); omitted = replay the current one. */
   readonly setupId?: string;
 }
 
@@ -55,6 +69,11 @@ export class GameClient {
   private readonly resizeObserver: ResizeObserver;
   private readonly unsubscribers: (() => void)[] = [];
   private simulation: Simulation;
+  /**
+   * The setup id restarts rebuild, as requested (undefined = core's default). Kept apart from the
+   * world's resolved id so R-to-restart and "Play again" replay exactly what was asked for.
+   */
+  private requestedSetupId: string | undefined;
   private rafId: number | null = null;
   private lastFrame = 0;
   private gameOverReported: boolean;
@@ -66,15 +85,18 @@ export class GameClient {
     this.gameOverReported = false;
     this.disposed = false;
     this.options = options;
+    this.requestedSetupId = options.setupId;
     this.hud = options.hud ?? new HudStore();
     // Pure simulation first: if core or the renderer throws, nothing with listeners exists yet.
-    this.simulation = createGame(this.createOptions());
+    this.simulation = createGame(gameOptions(this.requestedSetupId));
     this.renderer = new GameRenderer({ canvas: options.canvas });
     this.input = new InputController({ target: options.canvas });
     this.audio = new GameAudio();
     this.resizeObserver = new ResizeObserver(this.handleResize);
     try {
       this.renderer.reset(this.simulation.world);
+      // Before React subscribes, so the UI never shows the default setup for a frame.
+      this.publishHud();
       this.unsubscribers.push(
         this.input.onKey(this.handleKey),
         this.input.onLockChange(this.handleLockChange)
@@ -97,6 +119,11 @@ export class GameClient {
     return this.simulation.world;
   }
 
+  /** Id of the setup (difficulty) on the board, as core resolved it (legacy ids map to theirs). */
+  get setupId(): string {
+    return this.simulation.world.config.setup.id;
+  }
+
   /**
    * Begin/resume play. Call from a click handler: pointer lock and the AudioContext both need the
    * user gesture.
@@ -114,17 +141,26 @@ export class GameClient {
     this.input.exitLock();
   }
 
-  /** Fresh game with the same setup; keeps pointer lock so play resumes instantly. */
-  restart(): void {
+  /**
+   * Fresh game; keeps pointer lock so play resumes instantly. Pass `setupId` to switch difficulty:
+   * the board is rebuilt for that army and later restarts keep it. An unknown id throws before
+   * anything changes, so the current game survives a bad request.
+   */
+  restart(options: RestartOptions = {}): void {
     if (this.disposed) {
       return;
     }
-    this.simulation = createGame(this.createOptions());
+    const setupId = options.setupId ?? this.requestedSetupId;
+    this.simulation = createGame(gameOptions(setupId));
+    this.requestedSetupId = setupId;
     this.gameOverReported = false;
     this.hud.reset();
     this.input.reset();
     this.audio.reset();
     this.renderer.reset(this.simulation.world);
+    // Now rather than on the next frame: the overlays (difficulty picker, results card) follow the
+    // snapshot, and a hidden tab may not run another frame for a while.
+    this.publishHud();
     this.lastFrame = performance.now();
     this.startLoop();
   }
@@ -153,8 +189,12 @@ export class GameClient {
     this.renderer.dispose();
   }
 
-  private createOptions() {
-    return this.options.setupId ? { setupId: this.options.setupId } : {};
+  /** The HUD snapshot for the world as it stands, outside the loop (no step, no events). */
+  private publishHud(): void {
+    const { world } = this.simulation;
+    this.hud.update(world, {
+      paused: world.status === "playing" && !this.input.isLocked,
+    });
   }
 
   private startLoop(): void {

@@ -7,6 +7,12 @@ import { type RefObject, useEffect, useRef, useState } from "react";
 export interface GameClientCallbacks {
   readonly onGameOver: (result: RunResult) => void;
   readonly onLockError: () => void;
+  /**
+   * Setup (difficulty) a newly created client starts on. Read only at creation, through the same
+   * ref as the callbacks, so changing it never tears the game down: switching a running client
+   * goes through `client.restart({ setupId })`.
+   */
+  readonly setupId: string;
 }
 
 const describeError = (error: unknown): string =>
@@ -58,6 +64,7 @@ export function useGameClient(
           onError: (cause) => setError(describeError(cause)),
           onGameOver: (result) => callbacksRef.current.onGameOver(result),
           onLockError: () => callbacksRef.current.onLockError(),
+          setupId: callbacksRef.current.setupId,
         });
         exposeForDebugging(created);
         setClient(created);

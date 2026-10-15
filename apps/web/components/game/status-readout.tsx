@@ -2,6 +2,8 @@ const range = (count: number): number[] =>
   Array.from({ length: count }, (_, index) => index);
 
 export interface StatusReadoutProps {
+  /** "Easy" / "Medium" / "Hard": which army this run is against. */
+  readonly difficultyName: string;
   readonly gameTime: number;
   /** Shift held while moving (time is outrunning real time). */
   readonly sprinting: boolean;
@@ -19,10 +21,12 @@ const timeClassName = (timeScale: number): string | undefined => {
 };
 
 /**
- * Tiny monospace readout, bottom-right: the flow of time (the one number SUPERHOT players watch)
- * and how much the white king has left. Dark ink because the world behind it is near-white.
+ * Tiny monospace readout, bottom-right: the flow of time (the one number SUPERHOT players watch),
+ * how much the white king has left and the difficulty. Dark ink because the world behind it is
+ * near-white.
  */
 export function StatusReadout({
+  difficultyName,
   gameTime,
   sprinting,
   timeScale,
@@ -54,6 +58,9 @@ export function StatusReadout({
         </div>
       ) : null}
       <div className="flex items-center gap-4 tabular-nums">
+        <span className="border border-[rgba(10,12,14,0.35)] px-1.5 py-0.5 font-semibold text-[10px] leading-none tracking-[0.3em]">
+          {difficultyName}
+        </span>
         <span>{gameTime.toFixed(1)}s</span>
         {sprinting ? (
           <span className="bg-[#E80C0C] py-0.5 pr-[3px] pl-1.5 font-black text-[10px] text-white leading-none tracking-[0.3em]">

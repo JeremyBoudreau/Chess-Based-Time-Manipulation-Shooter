@@ -3,7 +3,13 @@
 import { Button } from "@buckshot/ui/components/button";
 import { cn } from "@buckshot/ui/lib/utils";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type DifficultyOption,
+  difficultyFromParams,
+  replaceDifficultyInUrl,
+} from "./difficulty";
 import { GameKeyframes } from "./game-keyframes";
 import { GameOverLayer } from "./game-over-overlays";
 import { IntroFlash } from "./intro-flash";
@@ -15,6 +21,13 @@ import { saveStatusFor, useRunSaver } from "./use-run-saver";
 import { CoolVignette } from "./vignettes";
 
 export interface GameViewProps {
+  /** The playable setups, easiest first, summarised on the server from core's SETUPS. */
+  readonly difficulties: readonly DifficultyOption[];
+  /**
+   * The server's reading of `?difficulty=` (already validated): only a fallback, since a
+   * back/forward restore can replay a render older than the address bar.
+   */
+  readonly initialDifficulty: string;
   readonly playerName: string | null;
   readonly signedIn: boolean;
 }
@@ -27,12 +40,27 @@ const reloadPage = () => window.location.reload();
  * The full-screen game: a three.js canvas driven by the engine's GameClient, with a SUPERHOT-style
  * HUD on top. React only mounts the client and renders from its HUD store; the game loop itself
  * never goes through React.
+ *
+ * Difficulty: `requested` is what the player asked for (seeds a newly created client and mirrors
+ * the URL); what is actually on the board comes from the HUD snapshot, which follows every
+ * restart and switch the client makes. It is seeded from the live URL, not `initialDifficulty`:
+ * picks rewrite the URL with `replaceState`, and a back/forward restore then replays the page's
+ * original render, so only `useSearchParams` matches what the address bar (and a refresh) says.
  */
-export function GameView({ playerName, signedIn }: GameViewProps) {
+export function GameView({
+  difficulties,
+  initialDifficulty,
+  playerName,
+  signedIn,
+}: GameViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasHostRef = useRef<HTMLDivElement>(null);
   const [lockRefused, setLockRefused] = useState(false);
   const [intro, setIntro] = useState<IntroPhase>("pending");
+  const searchParams = useSearchParams();
+  const [requested, setRequested] = useState(() =>
+    difficultyFromParams(difficulties, searchParams, initialDifficulty)
+  );
   const { save, saveRun } = useRunSaver(signedIn);
 
   const { client, error } = useGameClient(containerRef, canvasHostRef, {
@@ -42,8 +70,10 @@ export function GameView({ playerName, signedIn }: GameViewProps) {
       });
     },
     onLockError: () => setLockRefused(true),
+    setupId: requested,
   });
   const hud = useHud(client?.hud ?? null);
+  const difficultyId = hud?.difficultyId ?? requested;
 
   const playing = hud?.status === "playing";
   const active = playing && !hud.paused;
@@ -65,6 +95,33 @@ export function GameView({ playerName, signedIn }: GameViewProps) {
     client?.restart();
     client?.start();
   }, [client]);
+  /** Rebuild the board behind the title screen; play still starts from "Click to play". */
+  const selectDifficulty = useCallback(
+    (id: string) => {
+      if (!client) {
+        return;
+      }
+      if (client.setupId !== id) {
+        client.restart({ setupId: id });
+      }
+      setRequested(id);
+      replaceDifficultyInUrl(id);
+    },
+    [client]
+  );
+  /** From the results card: a fresh run on another army, started by this very click. */
+  const switchDifficulty = useCallback(
+    (id: string) => {
+      if (!client) {
+        return;
+      }
+      client.restart({ setupId: id });
+      client.start();
+      setRequested(id);
+      replaceDifficultyInUrl(id);
+    },
+    [client]
+  );
   const releasePointer = useCallback(() => client?.releasePointer(), [client]);
 
   const showStart = error === null && (hud === null || (playing && hud.paused));
@@ -84,9 +141,12 @@ export function GameView({ playerName, signedIn }: GameViewProps) {
       {intro === "playing" ? <IntroFlash onDone={endIntro} /> : null}
       {showStart ? (
         <StartOverlay
+          difficulties={difficulties}
+          difficultyId={difficultyId}
           loading={hud === null}
           lockRefused={lockRefused}
           onPlay={play}
+          onSelectDifficulty={selectDifficulty}
           playerName={playerName}
           resumed={intro !== "pending"}
           signedIn={signedIn}
@@ -94,9 +154,11 @@ export function GameView({ playerName, signedIn }: GameViewProps) {
       ) : null}
       {hud && !playing && hud.lastResult ? (
         <GameOverLayer
+          difficulties={difficulties}
           killedBy={hud.killedBy}
           onPlayAgain={playAgain}
           onReveal={releasePointer}
+          onSwitchDifficulty={switchDifficulty}
           result={hud.lastResult}
           saveStatus={saveStatusFor(save, hud.lastResult, signedIn)}
           won={hud.status === "won"}

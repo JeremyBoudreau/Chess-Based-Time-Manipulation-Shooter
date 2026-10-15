@@ -1,5 +1,11 @@
 import { Button } from "@buckshot/ui/components/button";
 import Link from "next/link";
+import {
+  type DifficultyOption,
+  findDifficulty,
+  signInHref,
+} from "./difficulty";
+import { DifficultyLabel, DifficultyPicker } from "./difficulty-picker";
 
 const CONTROLS = [
   { action: "move", keys: "WASD" },
@@ -11,11 +17,16 @@ const CONTROLS = [
 ] as const;
 
 export interface StartOverlayProps {
+  readonly difficulties: readonly DifficultyOption[];
+  /** The difficulty on the board (or about to be, while loading). */
+  readonly difficultyId: string;
   /** The engine is still downloading / initialising. */
   readonly loading: boolean;
   /** The browser refused pointer lock (clicked too soon after Escape). */
   readonly lockRefused: boolean;
   readonly onPlay: () => void;
+  /** Rebuild the board for another difficulty (only offered before the run starts). */
+  readonly onSelectDifficulty: (id: string) => void;
   readonly playerName: string | null;
   /** True once the run has started, so the overlay reads as a pause screen. */
   readonly resumed: boolean;
@@ -25,11 +36,17 @@ export interface StartOverlayProps {
 /**
  * Title / pause screen. Its button is the user gesture that grants pointer lock and unlocks
  * WebAudio, which is why play only ever starts from a click here (or on the canvas).
+ *
+ * The title screen offers the difficulty picker; the pause screen only names the difficulty,
+ * because switching there would silently throw the run in progress away.
  */
 export function StartOverlay({
+  difficulties,
+  difficultyId,
   loading,
   lockRefused,
   onPlay,
+  onSelectDifficulty,
   playerName,
   resumed,
   signedIn,
@@ -40,9 +57,12 @@ export function StartOverlay({
   } else if (resumed) {
     buttonLabel = "Click to resume";
   }
+  const current = findDifficulty(difficulties, difficultyId);
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-[rgba(233,242,246,0.72)] px-6 py-10 backdrop-blur-md">
-      <div className="flex max-w-2xl animate-[buckshot-rise_300ms_ease-out_both] flex-col items-center gap-7 text-center text-[#0A0C0E]">
+    // `m-auto` rather than justify/items-center: it centres the same way, but once the title,
+    // picker and controls outgrow a short window the column scrolls instead of clipping its top.
+    <div className="absolute inset-0 z-30 flex overflow-y-auto bg-[rgba(233,242,246,0.72)] px-6 py-10 backdrop-blur-md">
+      <div className="m-auto flex max-w-2xl animate-[buckshot-rise_300ms_ease-out_both] flex-col items-center gap-7 text-center text-[#0A0C0E]">
         <p className="font-mono text-[11px] text-[rgba(10,12,14,0.55)] uppercase tracking-[0.45em]">
           {resumed ? "Paused" : "You are the king"}
         </p>
@@ -69,6 +89,15 @@ export function StartOverlay({
           <span className="font-semibold text-[#0A0C0E]">walk over them</span>{" "}
           before a piece crushes them.
         </p>
+        {resumed ? null : (
+          <DifficultyPicker
+            difficulties={difficulties}
+            disabled={loading}
+            onSelect={onSelectDifficulty}
+            selectedId={difficultyId}
+          />
+        )}
+        {resumed && current ? <DifficultyLabel option={current} /> : null}
         <Button
           className="h-14 rounded-none bg-[#E80C0C] px-12 font-black text-base text-white uppercase tracking-[0.35em] shadow-[0_10px_30px_rgba(232,12,12,0.35)] hover:bg-[#C70A0A]"
           disabled={loading}
@@ -99,7 +128,7 @@ export function StartOverlay({
           ) : (
             <Link
               className="font-semibold text-[#E80C0C] underline-offset-4 hover:underline"
-              href="/sign-in"
+              href={signInHref(difficultyId)}
             >
               Sign in to save your runs
             </Link>

@@ -34,6 +34,7 @@ export function PlayingHud({
         reserveMax={hud.reserveMax}
       />
       <StatusReadout
+        difficultyName={hud.difficultyName}
         gameTime={hud.gameTime}
         sprinting={hud.sprinting}
         timeScale={hud.timeScale}

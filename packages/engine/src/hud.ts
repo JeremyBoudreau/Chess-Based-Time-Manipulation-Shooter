@@ -1,4 +1,5 @@
 import {
+  DEFAULT_SETUP,
   type GameStatus,
   PIECE_KINDS,
   type PieceKind,
@@ -16,6 +17,13 @@ import {
 export interface HudSnapshot {
   /** Shells the gun holds. */
   readonly capacity: number;
+  /**
+   * Setup (difficulty) id of the game on the board, resolved by core (a legacy id reads as the
+   * difficulty it maps to). Lets the UI follow restarts and difficulty switches from one source.
+   */
+  readonly difficultyId: string;
+  /** Display name of that setup ("Easy", "Medium", "Hard"). */
+  readonly difficultyName: string;
   /** True when a shot fired now would leave the barrel (crosshair "+" vs "x"). */
   readonly fireReady: boolean;
   /** Game-seconds, rounded to 0.1 s. */
@@ -49,6 +57,8 @@ export interface HudSnapshot {
 
 export const INITIAL_HUD_SNAPSHOT: HudSnapshot = {
   capacity: 2,
+  difficultyId: DEFAULT_SETUP.id,
+  difficultyName: DEFAULT_SETUP.name,
   fireReady: false,
   gameTime: 0,
   killedBy: null,
@@ -149,6 +159,8 @@ const computeSnapshot = (
   const kingAlive = king !== undefined && king.phase !== "dead";
   return {
     capacity: shotgun.capacity,
+    difficultyId: config.setup.id,
+    difficultyName: config.setup.name,
     fireReady:
       playing &&
       player.alive &&
