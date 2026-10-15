@@ -28,14 +28,12 @@ describe("targetTimeScale", () => {
     expect(target({ moveFraction: -2 })).toBe(DEFAULT_TIME_POLICY.idleScale);
   });
 
-  test("a full sprint runs time faster than real time", () => {
+  test("time follows leg speed, so a full sprint runs faster than real time", () => {
     expect(sprintScale).toBeGreaterThan(1);
-    expect(target({ moveFraction: 1, sprinting: true })).toBeCloseTo(
+    expect(target({ moveFraction: sprintScale, sprinting: true })).toBeCloseTo(
       sprintScale
     );
-    expect(target({ moveFraction: 0.5, sprinting: true })).toBeCloseTo(
-      0.5 * sprintScale
-    );
+    expect(target({ moveFraction: 1.2, sprinting: true })).toBeCloseTo(1.2);
     expect(target({ moveFraction: 3, sprinting: true })).toBeCloseTo(
       sprintScale
     );
@@ -65,11 +63,11 @@ describe("targetTimeScale", () => {
 
   test("sprinting lifts the legs + camera cap to the sprint scale", () => {
     expect(
-      target({ lookSpeed: 1000, moveFraction: 1, sprinting: true })
+      target({ lookSpeed: 1000, moveFraction: sprintScale, sprinting: true })
     ).toBeCloseTo(sprintScale);
     expect(
-      target({ lookSpeed: 1000, moveFraction: 0.5, sprinting: true })
-    ).toBeCloseTo(0.5 * sprintScale + lookMaxScale);
+      target({ lookSpeed: 1000, moveFraction: 0.875, sprinting: true })
+    ).toBeCloseTo(0.875 + lookMaxScale);
   });
 
   test("reloading adds a full second per second on top of activity", () => {
@@ -91,7 +89,7 @@ describe("targetTimeScale", () => {
       target({ lookSpeed: 1000, moveFraction: 1, reloading: true })
     ).toBeCloseTo(1.5);
     expect(
-      target({ moveFraction: 1, reloading: true, sprinting: true })
+      target({ moveFraction: sprintScale, reloading: true, sprinting: true })
     ).toBeCloseTo(sprintScale + reloadCapBonus);
   });
 
@@ -115,8 +113,9 @@ describe("targetTimeScale", () => {
 
   test("a policy without a real sprint boost never exceeds full speed", () => {
     const flat = { ...DEFAULT_TIME_POLICY, sprintScale: 0.8 };
+    // A sub-1 sprint factor slows the legs to 0.8× a walk, and the clock with them.
     expect(
-      targetTimeScale(flat, { ...still, moveFraction: 1, sprinting: true })
+      targetTimeScale(flat, { ...still, moveFraction: 0.8, sprinting: true })
     ).toBeCloseTo(0.8);
     expect(targetTimeScale(flat, { ...still, reloading: true })).toBe(1);
   });

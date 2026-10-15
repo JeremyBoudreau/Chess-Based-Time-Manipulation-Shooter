@@ -81,12 +81,11 @@ export const DEFAULT_SHOTGUN: ShotgunStats = {
   spreadJitter: 0.9,
 };
 
-/** Walking is 2.4 squares per real second; holding Shift sprints at 1.6× that. */
+/** Walking is 2.4 squares per real second; Shift sprints at `DEFAULT_TIME_POLICY.sprintScale`× that. */
 export const DEFAULT_PLAYER: PlayerStats = {
   maxPitch: 1.2,
   moveSpeed: 2.4,
   radius: 0.22,
-  sprintMultiplier: 1.6,
 };
 
 /**
@@ -107,8 +106,8 @@ export const DEFAULT_PICKUPS: PickupRules = {
  * Time moves with the king: walking, looking and reloading run it at up to full speed. Standing
  * still is a SUPERHOT-style creep (1%) rather than a hard freeze — the world never looks paused,
  * pellets visibly inch forward, yet 10 seconds of thinking costs only 0.1 s of game time.
- * Sprinting pushes time past real speed (1.75×) while the legs only go 1.6× faster, so a sprint
- * gets you there sooner in real time but gives the enemy slightly more game-time per square.
+ * Sprinting speeds legs and clock by the same factor (1.75×): a sprint gets you there sooner in real
+ * time, and every square still costs exactly as much game-time as walking it.
  * Effects stack: legs + camera are capped at 1 (1.75 sprinting); reloading adds 1 and lifts that
  * cap by 0.5 — a still reload is 1×, walking while reloading 1.5×, sprinting while reloading 2.25×.
  */

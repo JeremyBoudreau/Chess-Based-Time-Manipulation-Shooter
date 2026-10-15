@@ -6,8 +6,8 @@ export interface TimeSignals {
   /** Camera angular speed in radians per real second. */
   readonly lookSpeed: number;
   /**
-   * |velocity| / the current top speed (moveSpeed, × sprintMultiplier while sprinting), 0..1 — so
-   * "full legs" reads 1 whether walking or sprinting, and `sprinting` says which ceiling it means.
+   * |velocity| / walking speed: 1 at a walk, `sprintScale` at a full sprint. The clock's leg term is
+   * exactly this ratio, which is what ties sprint speed and sprint time together.
    */
   readonly moveFraction: number;
   readonly reloading: boolean;
@@ -26,13 +26,12 @@ const lookScale = (policy: TimePolicyData, lookSpeed: number): number => {
 };
 
 /**
- * Walking maps 1:1 onto time; a sprint maps the same fraction onto `sprintScale`, so a full sprint
- * runs the world faster than real time — sprinting is the only way past 1×.
+ * Time follows the legs: the leg term is your speed relative to a walk, so a walk is 1× and a full
+ * sprint is `sprintScale`× — the same factor the legs were sped up by. The activity cap keeps a
+ * non-sprinting king at 1×.
  */
-const moveScale = (policy: TimePolicyData, signals: TimeSignals): number => {
-  const fraction = clamp(signals.moveFraction, 0, 1);
-  return signals.sprinting ? fraction * policy.sprintScale : fraction;
-};
+const moveScale = (signals: TimeSignals): number =>
+  Math.max(0, signals.moveFraction);
 
 /** Ceiling for legs + camera: real time, or the sprint scale while sprinting. */
 const activityCap = (policy: TimePolicyData, sprinting: boolean): number =>
@@ -57,7 +56,7 @@ export const targetTimeScale = (
   const cap = activityCap(policy, signals.sprinting);
   const activity = Math.min(
     cap,
-    moveScale(policy, signals) + lookScale(policy, signals.lookSpeed)
+    moveScale(signals) + lookScale(policy, signals.lookSpeed)
   );
   const reloaded = signals.reloading
     ? Math.min(activity + policy.reloadBonus, cap + policy.reloadCapBonus)

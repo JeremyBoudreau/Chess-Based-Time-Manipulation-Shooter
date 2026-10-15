@@ -11,7 +11,7 @@ import { mulberry32 } from "../random";
 import { moveTravel, squaresPassed } from "../rules";
 import { SKIRMISH_SETUP, squareName } from "../setups";
 import { createSimulation, createWorld, stepWorld } from "../simulation";
-import { maxTimeScale } from "../time";
+import { maxTimeScale, targetTimeScale } from "../time";
 import type { GameEvent, PieceState, Square, WorldState } from "../types";
 import {
   eventsOfType,
@@ -194,15 +194,15 @@ describe("time", () => {
 });
 
 describe("sprint", () => {
-  const { moveSpeed, sprintMultiplier } = DEFAULT_PLAYER;
+  const { moveSpeed } = DEFAULT_PLAYER;
   const { idleScale, sprintScale } = DEFAULT_TIME_POLICY;
 
-  test("Shift moves the king sprintMultiplier times faster than walking", () => {
+  test("Shift moves the king sprintScale times faster than walking", () => {
     const world = makeWorld();
     const deps = makeDeps({ decide: waitBrain });
     stepWorld(world, SPRINT, FRAME, deps);
-    expect(sprintMultiplier).toBeGreaterThan(1);
-    expect(speedOf(world)).toBeCloseTo(moveSpeed * sprintMultiplier);
+    expect(sprintScale).toBeGreaterThan(1);
+    expect(speedOf(world)).toBeCloseTo(moveSpeed * sprintScale);
     expect(world.player.sprinting).toBe(true);
 
     stepWorld(world, frame({ moveX: 1 }), FRAME, deps);
@@ -217,9 +217,26 @@ describe("sprint", () => {
     expect(world.timeScale).toBeCloseTo(sprintScale, 3);
     expect(world.gameTime).toBeGreaterThan(world.realTime);
     expect(world.stats.distanceMoved).toBeCloseTo(
-      moveSpeed * sprintMultiplier * 0.8,
+      moveSpeed * sprintScale * 0.8,
       3
     );
+  });
+
+  test("sprint speed and sprint time are the same factor", () => {
+    for (const scale of [1.25, 1.75, 2.5]) {
+      const config = makeConfig();
+      const time = { ...config.time, sprintScale: scale };
+      const world = createWorld({ ...config, time }, mulberry32(7));
+      // One policy feeds both the legs (via config) and the clock (via deps), as the seams do.
+      const deps = makeDeps({
+        decide: waitBrain,
+        targetScale: (signals) => targetTimeScale(time, signals),
+      });
+      // Short enough that even a 2.5x sprint from e8 never reaches the board edge.
+      run(world, deps, 0.6, { input: SPRINT });
+      expect(speedOf(world) / moveSpeed).toBeCloseTo(scale, 6);
+      expect(world.timeScale).toBeCloseTo(scale, 2);
+    }
   });
 
   test("holding Shift while standing still does not speed time up", () => {

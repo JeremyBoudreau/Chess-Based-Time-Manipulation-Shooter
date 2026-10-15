@@ -264,8 +264,6 @@ export interface PlayerStats {
   readonly moveSpeed: number;
   /** Collision radius in board units. */
   readonly radius: number;
-  /** Speed multiplier while sprinting (Shift). */
-  readonly sprintMultiplier: number;
 }
 
 /** How shell pickups appear on the board (replaces passive reserve regeneration). */
@@ -300,8 +298,9 @@ export interface TimePolicyData {
   /** Real seconds of full-speed time after each shot (recoil "kick"). */
   readonly shotBurst: number;
   /**
-   * Time scale at a full sprint (> 1: the world runs faster than real time). Sprinting covers more
-   * board per real second but less per game-second, so it trades danger for speed.
+   * The sprint factor, shared by legs and clock: Shift moves the king `sprintScale`× faster than
+   * walking, and because the clock's leg term IS speed ÷ walking speed, a full sprint runs the world
+   * `sprintScale`× faster than real time too. One knob, so sprint speed and time can never drift.
    */
   readonly sprintScale: number;
 }

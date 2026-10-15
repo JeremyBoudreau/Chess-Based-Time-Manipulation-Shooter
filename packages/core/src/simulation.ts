@@ -364,8 +364,9 @@ const resolvePosition = (world: WorldState, wanted: Vec2): Vec2 => {
  * so walls and pieces slide instead of stopping dead. Long frames are split into short sub-steps so
  * the player can never be forced into a gap between two pieces.
  *
- * Shift multiplies the legs' speed, but `player.sprinting` is only set while the king really moves,
- * so Shift alone never speeds time up. Returns |velocity| / the current top speed (0..1).
+ * Shift multiplies the legs' speed by the time policy's `sprintScale` — the same factor the clock
+ * uses — but `player.sprinting` is only set while the king really moves, so Shift alone never
+ * speeds time up. Returns |velocity| / walking speed: 1 at a walk, `sprintScale` at a full sprint.
  */
 const applyMovement = (
   world: WorldState,
@@ -373,8 +374,10 @@ const applyMovement = (
   dt: number
 ): number => {
   const { player } = world;
-  const { moveSpeed, sprintMultiplier } = world.config.player;
-  const speed = input.sprint ? moveSpeed * sprintMultiplier : moveSpeed;
+  const { moveSpeed } = world.config.player;
+  const speed = input.sprint
+    ? moveSpeed * world.config.time.sprintScale
+    : moveSpeed;
   const facing = forward(player.yaw);
   const side = right(player.yaw);
   let wishX = side.x * input.moveX + facing.x * input.moveY;
@@ -411,8 +414,7 @@ const applyMovement = (
   const realSpeed = dt > 0 ? moved / dt : 0;
   player.sprinting =
     input.sprint && realSpeed > moveSpeed * SPRINT_MIN_SPEED_FRACTION;
-  const topSpeed = player.sprinting ? speed : moveSpeed;
-  return topSpeed > 0 ? realSpeed / topSpeed : 0;
+  return moveSpeed > 0 ? realSpeed / moveSpeed : 0;
 };
 
 /**
