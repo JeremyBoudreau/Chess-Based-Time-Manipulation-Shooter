@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { db, schema } from "@buckshot/db";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -6,18 +7,15 @@ import { nextCookies, toNextJsHandler } from "better-auth/next-js";
 import { Context, Data, Effect, Layer } from "effect";
 import { CALLSIGN_RULE, normalizeCallsign } from "./callsign";
 
-/** Only ever used outside production with no secret configured, so local dev works with zero setup. */
-const DEV_FALLBACK_SECRET =
-  "buckshot-gambit-dev-only-secret-7f3a9c1e5b2d8f4a6c0e9b7d3f1a5c8e";
-
 /**
- * Fails closed in production. The fallback is committed to the repo, and Better Auth trusts any
- * JWT signed with the secret (e.g. /verify-email mints a session from one), so running on it would
- * let anyone sign in as any user whose email they know. `next build` evaluates this module with
- * NODE_ENV=production but serves nothing, so it may use the fallback; at runtime the import throws
- * and every request fails loudly instead. AUTH_SECRET is read here because an explicit `secret`
- * shadows Better Auth's own lookup of it; with only BETTER_AUTH_SECRETS (the rotation list) set,
- * this returns undefined and Better Auth reads the list itself.
+ * The signing secret only ever comes from the environment — never from source — in every
+ * environment, so there is nothing in the repo that could leak and be used to forge sessions
+ * (Better Auth trusts any token signed with it). AUTH_SECRET is read here because an explicit
+ * `secret` shadows Better Auth's own lookup of it; with only BETTER_AUTH_SECRETS (the rotation list)
+ * set, this returns undefined and Better Auth reads the list itself.
+ *
+ * The one exception is `next build`: it evaluates this module to collect page data but serves no
+ * requests, so it gets a throwaway random secret that dies with the build process.
  */
 const resolveSecret = (): string | undefined => {
   const secret = process.env.BETTER_AUTH_SECRET || process.env.AUTH_SECRET;
@@ -27,15 +25,12 @@ const resolveSecret = (): string | undefined => {
   if (process.env.BETTER_AUTH_SECRETS) {
     return undefined;
   }
-  const productionRuntime =
-    process.env.NODE_ENV === "production" &&
-    process.env.NEXT_PHASE !== "phase-production-build";
-  if (productionRuntime) {
-    throw new Error(
-      "[buckshot/auth] BETTER_AUTH_SECRET must be set in production; refusing to start on the committed development secret."
-    );
+  if (process.env.NEXT_PHASE === "phase-production-build") {
+    return randomBytes(32).toString("base64");
   }
-  return DEV_FALLBACK_SECRET;
+  throw new Error(
+    "[buckshot/auth] BETTER_AUTH_SECRET is not set. Copy apps/web/.env.example to apps/web/.env.local and set it, e.g. `openssl rand -base64 32`."
+  );
 };
 
 /** Rejects blank or oversized callsigns at the database layer, whichever endpoint sent them. */

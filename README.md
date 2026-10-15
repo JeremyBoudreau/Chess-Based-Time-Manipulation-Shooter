@@ -49,7 +49,7 @@ Requires [Bun](https://bun.sh) 1.4+.
 
 ```bash
 bun install
-cp apps/web/.env.example apps/web/.env.local   # then set BETTER_AUTH_SECRET
+cp apps/web/.env.example apps/web/.env.local   # then set BETTER_AUTH_SECRET (required): openssl rand -base64 32
 bun run db:push                                # creates ./buckshot.db (SQLite)
 bun run dev                                    # http://localhost:3000
 ```
