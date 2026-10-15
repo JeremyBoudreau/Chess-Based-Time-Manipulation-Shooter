@@ -27,7 +27,7 @@ Pick a difficulty on the start screen, or link straight to one with `/play?diffi
 | Input | Action |
 | --- | --- |
 | `W` `A` `S` `D` | Move. Time runs while you move. |
-| `Shift` | Sprint: 1.75× speed, and time runs 1.75× too, faster than real time. The clock follows your legs, so the two always match. |
+| `Shift` | Sprint: 1.75× speed, and the clock speeds up to match. The clock follows your legs, so the two always match. |
 | Mouse | Aim. Turning the camera also moves time. |
 | Left click | Fire 5 pellets in a flat, wide spread. |
 | `R` | Reload. Adds 1× to the time scale on top of whatever else you're doing. |

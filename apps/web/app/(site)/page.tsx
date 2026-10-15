@@ -43,7 +43,7 @@ const PILLARS = [
     title: "Boots on the board",
   },
   {
-    body: "Stand still and the world nearly freezes. Walk, turn or reload and the clock runs; sprint and it outruns real time. A piece shakes and blinks red before it strikes: that is your cue to be somewhere else.",
+    body: "Stand still and the world nearly freezes. Walk, turn or reload and the clock runs; sprint and the world speeds up with you. A piece shakes and blinks red before it strikes: that is your cue to be somewhere else.",
     credit: "SUPERHOT",
     title: "Time is yours",
   },
@@ -58,7 +58,7 @@ const CONTROLS = [
   {
     action: "Sprint",
     keys: ["Shift"],
-    note: `${DEFAULT_TIME_POLICY.sprintScale}× speed, and time runs ${DEFAULT_TIME_POLICY.sprintScale}× too — faster than real time.`,
+    note: `${DEFAULT_TIME_POLICY.sprintScale}× speed — the clock speeds up to match.`,
   },
   {
     action: "Aim",
@@ -113,13 +113,13 @@ function BoardBackdrop() {
 function DifficultyCards() {
   return (
     <ul className="mt-12 grid gap-4 md:grid-cols-3">
-      {SETUPS.map((setup, index) => (
+      {SETUPS.map((setup) => (
         <li key={setup.id}>
           <Card className="relative h-full border-white/10 bg-card/60 transition-colors hover:border-blood/50">
             <CardHeader>
               <div className="flex items-center justify-between gap-4">
                 <p className="font-mono text-blood text-xs">
-                  0{index + 1} / {setup.white.length} pieces
+                  {setup.white.length} pieces
                 </p>
                 <DifficultyPips setupId={setup.id} />
               </div>

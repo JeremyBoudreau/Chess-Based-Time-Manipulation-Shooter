@@ -205,7 +205,7 @@ export default async function LeaderboardPage({
             </p>
           </div>
           <BoardTable
-            caption={`${setup.name} wins only. Game-time only ticks while you move, turn or reload — standing still is (almost) free, sprinting burns it faster than real time. Lower is better.`}
+            caption={`${setup.name} wins only. Game-time only ticks while you move, turn or reload — standing still is (almost) free, and sprinting speeds the clock up with you. Lower is better.`}
             columns={[
               { label: "Best time" },
               { className: "hidden sm:table-cell", label: "Wins" },
