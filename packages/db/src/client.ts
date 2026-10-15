@@ -15,11 +15,23 @@ const globalForDb = globalThis as typeof globalThis & {
   __buckshotDb?: DrizzleDb;
 };
 
-/** Reads connection settings from the environment; an empty token means "no token" (local file). */
+/**
+ * Connection settings from the environment. DATABASE_* wins; TURSO_* (the names Turso's Vercel
+ * integration injects) is accepted too, so a marketplace-provisioned database works unrenamed. An
+ * empty token means "no token" (local file).
+ */
+export const databaseUrl = (): string =>
+  process.env.DATABASE_URL ||
+  process.env.TURSO_DATABASE_URL ||
+  DEFAULT_DATABASE_URL;
+
+export const databaseAuthToken = (): string | undefined =>
+  process.env.DATABASE_AUTH_TOKEN || process.env.TURSO_AUTH_TOKEN || undefined;
+
 const createDb = (): DrizzleDb => {
   const client = createClient({
-    authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
-    url: process.env.DATABASE_URL || DEFAULT_DATABASE_URL,
+    authToken: databaseAuthToken(),
+    url: databaseUrl(),
   });
   return drizzle(client, { schema });
 };

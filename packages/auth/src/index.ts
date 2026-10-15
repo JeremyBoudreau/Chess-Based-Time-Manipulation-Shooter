@@ -44,9 +44,30 @@ const requireCallsign = (name: unknown): string => {
 
 const MIN_PASSWORD_LENGTH = 8;
 
+const https = (host: string | undefined): string | undefined =>
+  host ? `https://${host}` : undefined;
+
+/**
+ * The public origin. BETTER_AUTH_URL wins; on Vercel the project's production domain (a system
+ * variable) is the fallback, so a fresh deployment works before anyone sets the URL by hand.
+ */
+const baseURL =
+  process.env.BETTER_AUTH_URL ||
+  https(process.env.VERCEL_PROJECT_PRODUCTION_URL) ||
+  undefined;
+
+/**
+ * Origins allowed to call the auth API besides `baseURL`: Vercel's per-deployment and per-branch
+ * preview URLs, so signing in also works on preview deployments.
+ */
+const trustedOrigins = [
+  https(process.env.VERCEL_URL),
+  https(process.env.VERCEL_BRANCH_URL),
+].filter((origin): origin is string => origin !== undefined);
+
 /** The process-wide Better Auth instance (email + password, cookies set through Next.js). */
 export const auth = betterAuth({
-  baseURL: process.env.BETTER_AUTH_URL || undefined,
+  baseURL,
   database: drizzleAdapter(db, { provider: "sqlite", schema }),
   /*
    * Better Auth's sign-up and update-user schemas accept any string as `name`, so the callsign
@@ -76,6 +97,7 @@ export const auth = betterAuth({
   // nextCookies must stay last so it sees cookies set by every other plugin.
   plugins: [nextCookies()],
   secret: resolveSecret(),
+  trustedOrigins,
 });
 
 /** Route handlers for app/api/auth/[...all]; exported here so the app needs no direct better-auth dependency. */

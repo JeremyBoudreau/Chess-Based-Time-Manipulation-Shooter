@@ -1,0 +1,19 @@
+# Keep local-only files out of CLI deployments. A deployment is built from what is uploaded, so a
+# stray .env.local would override the production environment and a local .db would be shipped.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.db
+*.db-*
+project.html
+.claude
+.agents
+skills-lock.json
+.turbo
+**/.turbo
+**/.next
+**/node_modules
+**/*.tsbuildinfo
