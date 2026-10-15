@@ -3,11 +3,14 @@ import {
   attackSquares,
   buildOccupancy,
   canAttack,
+  moveTravel,
+  pathSquares,
   quietMoves,
+  squaresPassed,
   threatenedSquares,
 } from "../rules";
 import { squareName } from "../setups";
-import type { PieceState, Square } from "../types";
+import type { PieceKind, PieceState, Square } from "../types";
 import { makeWorld, piece, sq } from "./fixtures";
 
 const names = (squares: readonly Square[]): string[] =>
@@ -153,5 +156,75 @@ describe("threatenedSquares", () => {
       piece("bishop", "a8", { phase: "dead" }),
     ];
     expect(names(threatenedSquares(world))).toEqual(["c3", "e3", "g3"]);
+  });
+});
+
+describe("pathSquares", () => {
+  const path = (kind: PieceKind, from: string, to: string): string[] =>
+    pathSquares(kind, sq(from), sq(to)).map(squareName);
+
+  test("sliders cover every square between, ending on the destination", () => {
+    expect(path("rook", "a1", "a4")).toEqual(["a2", "a3", "a4"]);
+    expect(path("rook", "h1", "c1")).toEqual(["g1", "f1", "e1", "d1", "c1"]);
+    expect(path("bishop", "c1", "f4")).toEqual(["d2", "e3", "f4"]);
+    expect(path("queen", "d8", "a5")).toEqual(["c7", "b6", "a5"]);
+  });
+
+  test("kings and pawns step, a pawn's double push covers both squares", () => {
+    expect(path("king", "e1", "f2")).toEqual(["f2"]);
+    expect(path("pawn", "e2", "e3")).toEqual(["e3"]);
+    expect(path("pawn", "e2", "e4")).toEqual(["e3", "e4"]);
+    expect(path("pawn", "d4", "e5")).toEqual(["e5"]);
+  });
+
+  test("a knight jumps, touching only where it lands", () => {
+    expect(path("knight", "b1", "c3")).toEqual(["c3"]);
+    expect(path("knight", "g8", "e7")).toEqual(["e7"]);
+  });
+});
+
+describe("squaresPassed", () => {
+  const passed = (
+    kind: PieceKind,
+    from: string,
+    to: string,
+    moveProgress: number
+  ): string[] =>
+    squaresPassed(
+      piece(kind, to, {
+        fromSquare: sq(from),
+        moveProgress,
+        phase: "moving",
+      })
+    ).map(squareName);
+
+  test("the glide eases in and out and always ends on the destination", () => {
+    expect(moveTravel(0)).toBe(0);
+    expect(moveTravel(0.5)).toBeCloseTo(0.5, 10);
+    expect(moveTravel(1)).toBe(1);
+    expect(moveTravel(0.25)).toBeLessThan(0.25);
+    expect(moveTravel(0.75)).toBeGreaterThan(0.75);
+    expect(moveTravel(-1)).toBe(0);
+    expect(moveTravel(2)).toBe(1);
+  });
+
+  test("a slider has passed a square once its centre crosses into it", () => {
+    expect(passed("rook", "a1", "a5", 0)).toEqual([]);
+    // Four squares: a2 counts from 1/8 of the way, a3 from 3/8, a4 from 5/8, a5 from 7/8.
+    expect(passed("rook", "a1", "a5", 0.35)).toEqual(["a2"]);
+    expect(passed("rook", "a1", "a5", 0.5)).toEqual(["a2", "a3"]);
+    expect(passed("rook", "a1", "a5", 0.6)).toEqual(["a2", "a3", "a4"]);
+    expect(passed("rook", "a1", "a5", 1)).toEqual(["a2", "a3", "a4", "a5"]);
+  });
+
+  test("a one-square step reaches its destination halfway", () => {
+    expect(passed("pawn", "e2", "e3", 0.49)).toEqual([]);
+    expect(passed("pawn", "e2", "e3", 0.5)).toEqual(["e3"]);
+    expect(passed("king", "e1", "f2", 0.6)).toEqual(["f2"]);
+  });
+
+  test("a knight is airborne until it lands", () => {
+    expect(passed("knight", "b1", "c3", 0.99)).toEqual([]);
+    expect(passed("knight", "b1", "c3", 1)).toEqual(["c3"]);
   });
 });

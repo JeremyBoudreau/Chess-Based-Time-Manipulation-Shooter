@@ -1,11 +1,12 @@
 import { decidePieceAction } from "../brain";
 import {
+  DEFAULT_PICKUPS,
   DEFAULT_PIECE_CATALOG,
   DEFAULT_PLAYER,
   DEFAULT_SHOTGUN,
   DEFAULT_TIME_POLICY,
 } from "../config";
-import { squareCenter } from "../geometry";
+import { squareCenter, squareKey } from "../geometry";
 import { mulberry32 } from "../random";
 import { parseSquare } from "../setups";
 import { createWorld, type SimulationDeps, stepWorld } from "../simulation";
@@ -15,6 +16,8 @@ import {
   type GameConfig,
   type GameEvent,
   IDLE_INPUT,
+  type PickupRules,
+  type PickupState,
   type PieceCatalogData,
   type PieceKind,
   type PieceState,
@@ -45,7 +48,20 @@ export const piece = (
   ...overrides,
 });
 
+/** A hand-placed shell box (tests set `world.pickups` directly to control the board). */
+export const pickup = (
+  square: string,
+  overrides: Partial<PickupState> = {}
+): PickupState => ({
+  age: 0,
+  id: 100 + squareKey(sq(square)),
+  shells: DEFAULT_PICKUPS.shellsPerPickup,
+  square: sq(square),
+  ...overrides,
+});
+
 export interface ConfigOptions {
+  readonly pickups?: Partial<PickupRules>;
   readonly pieces?: Partial<PieceCatalogData>;
   readonly playerStart?: string;
   readonly shotgun?: Partial<ShotgunStats>;
@@ -54,6 +70,7 @@ export interface ConfigOptions {
 
 /** Default stats with a custom army, so each test controls exactly what is on the board. */
 export const makeConfig = (options: ConfigOptions = {}): GameConfig => ({
+  pickups: { ...DEFAULT_PICKUPS, ...options.pickups },
   pieces: { ...DEFAULT_PIECE_CATALOG, ...options.pieces },
   player: DEFAULT_PLAYER,
   setup: {

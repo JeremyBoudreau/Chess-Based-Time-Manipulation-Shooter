@@ -95,16 +95,29 @@ export interface PlayerState {
   /** Radians, clamped by the config. Purely cosmetic for the simulation (shots are horizontal). */
   pitch: number;
   pos: Vec2;
-  /** Game-seconds until the next reserve shell regenerates. */
-  regenTimer: number;
   /** Game-seconds of reload remaining; 0 when not reloading. */
   reloadTimer: number;
   /** Shells in reserve (0..reserveMax). */
   reserve: number;
+  /** True while sprint is held AND the king is actually moving (drives time scale, FOV kick, HUD). */
+  sprinting: boolean;
   /** Board units per real second (actual velocity after collisions). */
   velocity: Vec2;
   /** Radians, see file header for convention. */
   yaw: number;
+}
+
+/**
+ * A shell box lying on an empty square. Walking onto its square collects it (if the reserve has
+ * room); any white piece moving onto or sliding across its square crushes it.
+ */
+export interface PickupState {
+  /** Game-seconds since it appeared (renderer uses it for the drop-in animation). */
+  age: number;
+  readonly id: number;
+  /** Shells added to the reserve when collected. */
+  readonly shells: number;
+  readonly square: Square;
 }
 
 export type GameStatus = "playing" | "won" | "lost";
@@ -114,7 +127,25 @@ export type GameEvent =
   | { readonly type: "dryFire" }
   | { readonly type: "reloadStart" }
   | { readonly type: "reloadEnd"; readonly loaded: number }
-  | { readonly type: "shellRegenerated"; readonly reserve: number }
+  | {
+      readonly type: "pickupSpawned";
+      readonly pickupId: number;
+      readonly square: Square;
+    }
+  | {
+      readonly type: "pickupCollected";
+      readonly pickupId: number;
+      readonly square: Square;
+      /** Shells actually added (may be fewer than the box held if the reserve was nearly full). */
+      readonly shells: number;
+      readonly reserve: number;
+    }
+  | {
+      readonly type: "pickupCrushed";
+      readonly pickupId: number;
+      readonly square: Square;
+      readonly pieceId: string;
+    }
   | {
       readonly type: "pieceHit";
       readonly pieceId: string;
@@ -156,6 +187,8 @@ export interface RunStats {
   kills: KillCounts;
   pelletsFired: number;
   pelletsHit: number;
+  /** Shells picked up from the board (reserve gained). */
+  shellsCollected: number;
   shotsFired: number;
 }
 
@@ -173,6 +206,8 @@ export interface FrameInput {
   readonly moveY: number;
   /** Reload pressed this frame (edge-triggered). */
   readonly reload: boolean;
+  /** Sprint held (Shift): faster legs, and time runs faster than real time. */
+  readonly sprint: boolean;
 }
 
 export const IDLE_INPUT: FrameInput = {
@@ -182,6 +217,7 @@ export const IDLE_INPUT: FrameInput = {
   moveX: 0,
   moveY: 0,
   reload: false,
+  sprint: false,
 };
 
 export interface PieceDefinition {
@@ -213,10 +249,8 @@ export interface ShotgunStats {
   readonly pellets: number;
   /** Game-seconds for a full reload (time runs at full speed while reloading). */
   readonly reloadDuration: number;
-  /** Max reserve shells. */
+  /** Max reserve shells. Shells only come back by collecting pickups from the board. */
   readonly reserveMax: number;
-  /** Game-seconds per regenerated reserve shell. */
-  readonly reserveRegenInterval: number;
   readonly reserveStart: number;
   /** Half-angle of the horizontal spread, in degrees. */
   readonly spreadDegrees: number;
@@ -230,6 +264,24 @@ export interface PlayerStats {
   readonly moveSpeed: number;
   /** Collision radius in board units. */
   readonly radius: number;
+  /** Speed multiplier while sprinting (Shift). */
+  readonly sprintMultiplier: number;
+}
+
+/** How shell pickups appear on the board (replaces passive reserve regeneration). */
+export interface PickupRules {
+  /** Pickups already on the board when the game starts. */
+  readonly initialPickups: number;
+  /** Never more than this many pickups on the board at once. */
+  readonly maxOnBoard: number;
+  /** Minimum Chebyshev distance (in squares) from the king's square for a new pickup. */
+  readonly minSpawnDistance: number;
+  /** Shells in each pickup. */
+  readonly shellsPerPickup: number;
+  /** Mean game-seconds between spawn attempts. */
+  readonly spawnInterval: number;
+  /** ± fraction of `spawnInterval` applied randomly after each attempt. */
+  readonly spawnJitter: number;
 }
 
 export interface TimePolicyData {
@@ -239,10 +291,19 @@ export interface TimePolicyData {
   readonly lookFullSpeed: number;
   /** Max time scale contributed by camera movement alone. */
   readonly lookMaxScale: number;
+  /** Added to the time scale while reloading (a still reload runs at exactly this speed). */
+  readonly reloadBonus: number;
+  /** How far reloading lifts the activity cap (walk + reload = 1 + this, sprint + reload = sprintScale + this). */
+  readonly reloadCapBonus: number;
   /** Exponential smoothing rate (1/s) towards the target scale. */
   readonly responsiveness: number;
   /** Real seconds of full-speed time after each shot (recoil "kick"). */
   readonly shotBurst: number;
+  /**
+   * Time scale at a full sprint (> 1: the world runs faster than real time). Sprinting covers more
+   * board per real second but less per game-second, so it trades danger for speed.
+   */
+  readonly sprintScale: number;
 }
 
 export interface SetupPiece {
@@ -260,6 +321,7 @@ export interface SetupDefinition {
 
 /** Everything needed to start a game. Seams resolve each part (catalog, loadout, setup, time policy). */
 export interface GameConfig {
+  readonly pickups: PickupRules;
   readonly pieces: PieceCatalogData;
   readonly player: PlayerStats;
   readonly setup: SetupDefinition;
@@ -276,7 +338,12 @@ export interface WorldState {
   /** Set when the king is captured. */
   killedBy: PieceKind | null;
   nextPelletId: number;
+  nextPickupId: number;
   pellets: PelletState[];
+  /** Shell boxes currently on the board. */
+  pickups: PickupState[];
+  /** Game-seconds until the next pickup spawn attempt. */
+  pickupTimer: number;
   pieces: PieceState[];
   player: PlayerState;
   /** Accumulated real seconds. */
@@ -285,7 +352,7 @@ export interface WorldState {
   shotBurstRemaining: number;
   stats: RunStats;
   status: GameStatus;
-  /** Current time scale 0..1 (smoothed). */
+  /** Current time scale, 0..time.sprintScale (smoothed). */
   timeScale: number;
 }
 

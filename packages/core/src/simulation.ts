@@ -9,13 +9,20 @@ import {
   squareCenter,
   squareKey,
 } from "./geometry";
-import { buildOccupancy, type Occupancy } from "./rules";
+import {
+  buildOccupancy,
+  type Occupancy,
+  pathSquares,
+  squaresPassed,
+} from "./rules";
 import { pelletAngles, traverseSquares } from "./shotgun";
 import type { TimeSignals } from "./time";
 import type {
   FrameInput,
   GameConfig,
   PelletState,
+  PickupRules,
+  PickupState,
   PieceAction,
   PieceDefinition,
   PieceState,
@@ -62,6 +69,11 @@ const COLLISION_PASSES = 2;
  */
 const MAX_SUBSTEP_RADIUS_FRACTION = 0.5;
 const RANGE_EPSILON = 1e-9;
+/**
+ * Below this fraction of walking speed the king counts as standing still, so holding Shift while
+ * idle (or pressed into a wall) never speeds time up.
+ */
+const SPRINT_MIN_SPEED_FRACTION = 0.05;
 
 interface Box {
   readonly maxX: number;
@@ -101,47 +113,154 @@ const createPiece = (
   };
 };
 
+/** Chebyshev (king-step) distance between two squares. */
+const kingSteps = (a: Square, b: Square): number =>
+  Math.max(Math.abs(a.file - b.file), Math.abs(a.rank - b.rank));
+
+/**
+ * Squares no new pickup may use: every living piece's square and every existing box. A piece that
+ * is mid-slide also blocks the square it left and its whole path: a box dropped behind it would
+ * land under the gliding model (and, on a passed square, never be crushed), and one dropped ahead
+ * of it would be crushed moments after appearing.
+ */
+const blockedSquares = (world: WorldState): Set<number> => {
+  const blocked = new Set<number>();
+  for (const piece of world.pieces) {
+    if (piece.phase === "dead") {
+      continue;
+    }
+    blocked.add(squareKey(piece.square));
+    if (piece.phase === "moving") {
+      blocked.add(squareKey(piece.fromSquare));
+      for (const square of pathSquares(
+        piece.kind,
+        piece.fromSquare,
+        piece.square
+      )) {
+        blocked.add(squareKey(square));
+      }
+    }
+  }
+  for (const pickup of world.pickups) {
+    blocked.add(squareKey(pickup.square));
+  }
+  return blocked;
+};
+
+/**
+ * Free squares at least `minSpawnDistance` king-steps from the player (and never the player's own
+ * square), so restocking always means walking out into the open.
+ */
+const spawnCandidates = (world: WorldState): Square[] => {
+  const blocked = blockedSquares(world);
+  const king = squareAt(world.player.pos);
+  const { minSpawnDistance } = world.config.pickups;
+  const candidates: Square[] = [];
+  for (let rank = 0; rank < BOARD_SIZE; rank += 1) {
+    for (let file = 0; file < BOARD_SIZE; file += 1) {
+      const square = { file, rank };
+      const allowed =
+        !(blocked.has(squareKey(square)) || sameSquare(square, king)) &&
+        kingSteps(square, king) >= minSpawnDistance;
+      if (allowed) {
+        candidates.push(square);
+      }
+    }
+  }
+  return candidates;
+};
+
+/** Game-seconds until the next spawn attempt: the interval ± its jitter. */
+const nextSpawnDelay = (
+  { spawnInterval, spawnJitter }: PickupRules,
+  rng: () => number
+): number => spawnInterval * (1 + spawnJitter * (2 * rng() - 1));
+
+/** Drops a box on a uniformly random candidate square; null (drawing no randomness) when none is free. */
+const spawnPickup = (
+  world: WorldState,
+  rng: () => number
+): PickupState | null => {
+  const candidates = spawnCandidates(world);
+  if (candidates.length === 0) {
+    return null;
+  }
+  const index = Math.min(
+    candidates.length - 1,
+    Math.floor(rng() * candidates.length)
+  );
+  const square = candidates[index];
+  if (!square) {
+    return null;
+  }
+  const pickup: PickupState = {
+    age: 0,
+    id: world.nextPickupId,
+    shells: world.config.pickups.shellsPerPickup,
+    square,
+  };
+  world.nextPickupId += 1;
+  world.pickups.push(pickup);
+  return pickup;
+};
+
 /**
  * A fresh game: the player stands on the setup's start square facing White, and each piece's first
- * action is staggered randomly so the army does not move in lockstep.
+ * action is staggered randomly so the army does not move in lockstep. The opening boxes are placed
+ * by the same rule as later spawns; they are part of the starting state, so they emit no event.
  */
 export const createWorld = (
   config: GameConfig,
   rng: () => number
-): WorldState => ({
-  config,
-  events: [],
-  gameTime: 0,
-  killedBy: null,
-  nextPelletId: 1,
-  pellets: [],
-  pieces: config.setup.white.map((entry, index) =>
-    createPiece(entry, index, config, rng)
-  ),
-  player: {
-    alive: true,
-    fireCooldown: 0,
-    loaded: config.shotgun.capacity,
-    pitch: 0,
-    pos: squareCenter(config.setup.playerStart),
-    regenTimer: config.shotgun.reserveRegenInterval,
-    reloadTimer: 0,
-    reserve: config.shotgun.reserveStart,
-    velocity: { x: 0, y: 0 },
-    yaw: Math.PI,
-  },
-  realTime: 0,
-  shotBurstRemaining: 0,
-  stats: {
-    distanceMoved: 0,
-    kills: { bishop: 0, king: 0, knight: 0, pawn: 0, queen: 0, rook: 0 },
-    pelletsFired: 0,
-    pelletsHit: 0,
-    shotsFired: 0,
-  },
-  status: "playing",
-  timeScale: config.time.idleScale,
-});
+): WorldState => {
+  const world: WorldState = {
+    config,
+    events: [],
+    gameTime: 0,
+    killedBy: null,
+    nextPelletId: 1,
+    nextPickupId: 1,
+    pellets: [],
+    pickups: [],
+    pickupTimer: 0,
+    pieces: config.setup.white.map((entry, index) =>
+      createPiece(entry, index, config, rng)
+    ),
+    player: {
+      alive: true,
+      fireCooldown: 0,
+      loaded: config.shotgun.capacity,
+      pitch: 0,
+      pos: squareCenter(config.setup.playerStart),
+      reloadTimer: 0,
+      reserve: config.shotgun.reserveStart,
+      sprinting: false,
+      velocity: { x: 0, y: 0 },
+      yaw: Math.PI,
+    },
+    realTime: 0,
+    shotBurstRemaining: 0,
+    stats: {
+      distanceMoved: 0,
+      kills: { bishop: 0, king: 0, knight: 0, pawn: 0, queen: 0, rook: 0 },
+      pelletsFired: 0,
+      pelletsHit: 0,
+      shellsCollected: 0,
+      shotsFired: 0,
+    },
+    status: "playing",
+    timeScale: config.time.idleScale,
+  };
+  const opening = Math.min(
+    config.pickups.initialPickups,
+    config.pickups.maxOnBoard
+  );
+  for (let index = 0; index < opening; index += 1) {
+    spawnPickup(world, rng);
+  }
+  world.pickupTimer = nextSpawnDelay(config.pickups, rng);
+  return world;
+};
 
 /** Game over: time stops, but the killing lunge and hit flashes still play out in real time. */
 const animateAftermath = (world: WorldState, dt: number): void => {
@@ -243,7 +362,10 @@ const resolvePosition = (world: WorldState, wanted: Vec2): Vec2 => {
 /**
  * Walks the player in REAL time (the player is never slowed, only the world is), resolving x then y
  * so walls and pieces slide instead of stopping dead. Long frames are split into short sub-steps so
- * the player can never be forced into a gap between two pieces. Returns |velocity| / moveSpeed.
+ * the player can never be forced into a gap between two pieces.
+ *
+ * Shift multiplies the legs' speed, but `player.sprinting` is only set while the king really moves,
+ * so Shift alone never speeds time up. Returns |velocity| / the current top speed (0..1).
  */
 const applyMovement = (
   world: WorldState,
@@ -251,7 +373,8 @@ const applyMovement = (
   dt: number
 ): number => {
   const { player } = world;
-  const { moveSpeed } = world.config.player;
+  const { moveSpeed, sprintMultiplier } = world.config.player;
+  const speed = input.sprint ? moveSpeed * sprintMultiplier : moveSpeed;
   const facing = forward(player.yaw);
   const side = right(player.yaw);
   let wishX = side.x * input.moveX + facing.x * input.moveY;
@@ -263,19 +386,19 @@ const applyMovement = (
   }
   const start = player.pos;
   const maxSubstep = world.config.player.radius * MAX_SUBSTEP_RADIUS_FRACTION;
-  const travel = Math.min(1, wishLength) * moveSpeed * dt;
+  const travel = Math.min(1, wishLength) * speed * dt;
   const substeps =
     maxSubstep > 0 ? Math.max(1, Math.ceil(travel / maxSubstep)) : 1;
   const subDt = dt / substeps;
   let end = start;
   for (let index = 0; index < substeps; index += 1) {
     const afterX = resolvePosition(world, {
-      x: end.x + wishX * moveSpeed * subDt,
+      x: end.x + wishX * speed * subDt,
       y: end.y,
     });
     end = resolvePosition(world, {
       x: afterX.x,
-      y: afterX.y + wishY * moveSpeed * subDt,
+      y: afterX.y + wishY * speed * subDt,
     });
   }
   const movedX = end.x - start.x;
@@ -285,7 +408,43 @@ const applyMovement = (
   player.velocity =
     dt > 0 ? { x: movedX / dt, y: movedY / dt } : { x: 0, y: 0 };
   world.stats.distanceMoved += moved;
-  return dt > 0 && moveSpeed > 0 ? moved / dt / moveSpeed : 0;
+  const realSpeed = dt > 0 ? moved / dt : 0;
+  player.sprinting =
+    input.sprint && realSpeed > moveSpeed * SPRINT_MIN_SPEED_FRACTION;
+  const topSpeed = player.sprinting ? speed : moveSpeed;
+  return topSpeed > 0 ? realSpeed / topSpeed : 0;
+};
+
+/**
+ * Walking onto a box's square takes as many of its shells as the reserve has room for. It runs in
+ * real time right after movement, so it works even while time is only creeping. A full reserve
+ * leaves the box where it is for later.
+ */
+const collectPickup = (world: WorldState): void => {
+  const { player } = world;
+  const { reserveMax } = world.config.shotgun;
+  if (player.reserve >= reserveMax) {
+    return;
+  }
+  const here = squareAt(player.pos);
+  const index = world.pickups.findIndex((candidate) =>
+    sameSquare(candidate.square, here)
+  );
+  const box = world.pickups[index];
+  if (!box) {
+    return;
+  }
+  world.pickups.splice(index, 1);
+  const shells = Math.min(box.shells, reserveMax - player.reserve);
+  player.reserve += shells;
+  world.stats.shellsCollected += shells;
+  world.events.push({
+    pickupId: box.id,
+    reserve: player.reserve,
+    shells,
+    square: box.square,
+    type: "pickupCollected",
+  });
 };
 
 const fireShell = (world: WorldState, rng: () => number): void => {
@@ -346,7 +505,11 @@ const handleWeapon = (
   world.shotBurstRemaining = Math.max(0, world.shotBurstRemaining - dt);
 };
 
-/** Smooths the time scale towards the policy's target and returns this frame's game-seconds. */
+/**
+ * Smooths the time scale towards the policy's target and returns this frame's game-seconds.
+ * A reload snaps time to at least full speed from its first frame (so it never costs more than its
+ * duration in real time); a sprint on top keeps smoothing past 1×, finishing it sooner still.
+ */
 const advanceTime = (
   world: WorldState,
   deps: SimulationDeps,
@@ -354,17 +517,15 @@ const advanceTime = (
   signals: Pick<TimeSignals, "lookSpeed" | "moveFraction">
 ): number => {
   const reloading = world.player.reloadTimer > 0;
-  if (reloading) {
-    world.timeScale = 1;
-  } else {
-    const target = deps.targetScale({
-      ...signals,
-      reloading,
-      shotBurst: world.shotBurstRemaining > 0,
-    });
-    const blend = 1 - Math.exp(-world.config.time.responsiveness * dt);
-    world.timeScale += (target - world.timeScale) * blend;
-  }
+  const target = deps.targetScale({
+    ...signals,
+    reloading,
+    shotBurst: world.shotBurstRemaining > 0,
+    sprinting: world.player.sprinting,
+  });
+  const blend = 1 - Math.exp(-world.config.time.responsiveness * dt);
+  const smoothed = world.timeScale + (target - world.timeScale) * blend;
+  world.timeScale = reloading ? Math.max(1, smoothed) : smoothed;
   const gameDt = dt * world.timeScale;
   world.gameTime += gameDt;
   return gameDt;
@@ -387,21 +548,6 @@ const progressReload = (world: WorldState, gameDt: number): void => {
   player.loaded += shells;
   player.reserve -= shells;
   world.events.push({ loaded: player.loaded, type: "reloadEnd" });
-};
-
-const regenerateShells = (world: WorldState, gameDt: number): void => {
-  const { player } = world;
-  const { reserveMax, reserveRegenInterval } = world.config.shotgun;
-  if (player.reserve >= reserveMax) {
-    player.regenTimer = reserveRegenInterval;
-    return;
-  }
-  player.regenTimer -= gameDt;
-  while (player.regenTimer <= 0 && player.reserve < reserveMax) {
-    player.reserve += 1;
-    player.regenTimer += reserveRegenInterval;
-    world.events.push({ reserve: player.reserve, type: "shellRegenerated" });
-  }
 };
 
 const expirePellet = (world: WorldState, pellet: PelletState): void => {
@@ -523,6 +669,37 @@ const startMove = (piece: PieceState, to: Square): void => {
   piece.phase = "moving";
 };
 
+/**
+ * `piece` crushes every box on `squares`. A quiet move calls this every game-time step with the
+ * squares it has reached so far (`squaresPassed`), so a piece shot mid-slide spares the boxes
+ * still ahead of it and the player can grab one first. Capturing the king ends the game on the
+ * spot, so an attack crushes its whole path at once.
+ */
+const crushPickups = (
+  world: WorldState,
+  piece: PieceState,
+  squares: readonly Square[]
+): void => {
+  if (world.pickups.length === 0 || squares.length === 0) {
+    return;
+  }
+  let kept = 0;
+  for (const pickup of world.pickups) {
+    if (squares.some((square) => sameSquare(square, pickup.square))) {
+      world.events.push({
+        pickupId: pickup.id,
+        pieceId: piece.id,
+        square: pickup.square,
+        type: "pickupCrushed",
+      });
+    } else {
+      world.pickups[kept] = pickup;
+      kept += 1;
+    }
+  }
+  world.pickups.length = kept;
+};
+
 const promoteIfPossible = (world: WorldState, piece: PieceState): void => {
   if (piece.kind !== "pawn" || piece.square.rank !== PROMOTION_RANK) {
     return;
@@ -543,6 +720,11 @@ const actPiece = (
   const action = deps.decide(world, piece, deps.rng);
   if (action.type === "attack") {
     startMove(piece, action.to);
+    crushPickups(
+      world,
+      piece,
+      pathSquares(piece.kind, piece.fromSquare, piece.square)
+    );
     piece.isAttacking = true;
     world.status = "lost";
     world.killedBy = piece.kind;
@@ -571,8 +753,13 @@ const actPiece = (
     actionInterval * (1 + intervalJitter * (2 * deps.rng() - 1));
 };
 
-/** Advances the move animation; a piece only telegraphs again once it has arrived. */
+/**
+ * Advances the move in game time, crushing each box on the path as the piece reaches it (see
+ * `squaresPassed`); a piece only telegraphs again once it has arrived. A promoted pawn crushes
+ * with its queen path, which for its one-square push is the same square.
+ */
 const advanceMove = (
+  world: WorldState,
   piece: PieceState,
   definition: PieceDefinition,
   gameDt: number
@@ -581,6 +768,9 @@ const advanceMove = (
     definition.moveDuration > 0
       ? Math.min(1, piece.moveProgress + gameDt / definition.moveDuration)
       : 1;
+  if (world.pickups.length > 0) {
+    crushPickups(world, piece, squaresPassed(piece));
+  }
   if (piece.moveProgress >= 1) {
     piece.phase = "idle";
   }
@@ -598,7 +788,7 @@ const updatePiece = (
 ): void => {
   const definition = world.config.pieces[piece.kind];
   if (piece.phase === "moving") {
-    advanceMove(piece, definition, gameDt);
+    advanceMove(world, piece, definition, gameDt);
   }
   piece.actionTimer -= gameDt;
   if (
@@ -639,8 +829,38 @@ const updatePieces = (
 };
 
 /**
- * One frame. The player (look, walk, trigger) runs in real time; everything else runs in game time,
- * which the time policy derives from how actively the player is moving this frame.
+ * Ages the boxes and runs the spawn clock in game time. The clock restarts on every attempt, even
+ * when the board is full, so a collected box is never replaced the instant it is picked up.
+ */
+const updatePickups = (
+  world: WorldState,
+  gameDt: number,
+  rng: () => number
+): void => {
+  for (const pickup of world.pickups) {
+    pickup.age += gameDt;
+  }
+  world.pickupTimer -= gameDt;
+  if (world.pickupTimer > 0) {
+    return;
+  }
+  const rules = world.config.pickups;
+  if (world.pickups.length < rules.maxOnBoard) {
+    const pickup = spawnPickup(world, rng);
+    if (pickup) {
+      world.events.push({
+        pickupId: pickup.id,
+        square: pickup.square,
+        type: "pickupSpawned",
+      });
+    }
+  }
+  world.pickupTimer = nextSpawnDelay(rules, rng);
+};
+
+/**
+ * One frame. The player (look, walk, pick up, trigger) runs in real time; everything else runs in
+ * game time, which the time policy derives from how actively the player is moving this frame.
  */
 export const stepWorld = (
   world: WorldState,
@@ -657,13 +877,16 @@ export const stepWorld = (
   }
   const lookSpeed = applyLook(world, input, dt);
   const moveFraction = applyMovement(world, input, dt);
+  collectPickup(world);
   handleWeapon(world, input, dt, deps.rng);
   const gameDt = advanceTime(world, deps, dt, { lookSpeed, moveFraction });
   progressReload(world, gameDt);
-  regenerateShells(world, gameDt);
   updatePellets(world, gameDt);
   if (world.status === "playing") {
     updatePieces(world, dt, gameDt, deps);
+  }
+  if (world.status === "playing") {
+    updatePickups(world, gameDt, deps.rng);
   }
   return world;
 };

@@ -171,6 +171,67 @@ export const canAttack = (
 ): boolean =>
   attackSquares(piece, occupancy).some((square) => sameSquare(square, target));
 
+/**
+ * Squares a piece passes over on its way from `from` to `to`, ending with `to` — what it crushes
+ * (shell pickups). Everything but the knight moves along a straight or diagonal line, so it covers
+ * every square strictly between the two plus the destination; a knight jumps, touching only `to`.
+ * Off-line pairs (never produced by the rules) fall back to just `to`.
+ */
+export const pathSquares = (
+  kind: PieceKind,
+  from: Square,
+  to: Square
+): Square[] => {
+  const fileDelta = to.file - from.file;
+  const rankDelta = to.rank - from.rank;
+  const steps = Math.max(Math.abs(fileDelta), Math.abs(rankDelta));
+  const onLine =
+    fileDelta === 0 ||
+    rankDelta === 0 ||
+    Math.abs(fileDelta) === Math.abs(rankDelta);
+  if (kind === "knight" || !onLine || steps === 0) {
+    return [to];
+  }
+  const direction: Offset = [Math.sign(fileDelta), Math.sign(rankDelta)];
+  const squares: Square[] = [];
+  let square = from;
+  for (let index = 0; index < steps; index += 1) {
+    square = offsetSquare(square, direction);
+    squares.push(square);
+  }
+  return squares;
+};
+
+/**
+ * Fraction (0..1) of its path a quiet move has covered at `progress`. Pieces glide with an
+ * ease-in-out cubic (the curve the engine draws them with), so the rules judge "the piece has
+ * reached this square" from where the model actually is, not from the raw clock: on a long slide
+ * the raw clock runs well ahead of the slow start, and a box would vanish while the piece is
+ * visibly still squares away.
+ */
+export const moveTravel = (progress: number): number => {
+  const t = Math.min(1, Math.max(0, progress));
+  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+};
+
+/**
+ * The squares of a moving piece's `pathSquares` it has already passed over — what it may crush so
+ * far. Square i of n counts once the piece's centre crosses into it (`moveTravel` ≥ (i − ½) / n),
+ * so a piece killed mid-slide never reaches the boxes ahead of it. A knight is airborne until it
+ * lands, so it covers its destination only on arrival.
+ */
+export const squaresPassed = (piece: PieceState): Square[] => {
+  const path = pathSquares(piece.kind, piece.fromSquare, piece.square);
+  if (piece.moveProgress >= 1) {
+    return path;
+  }
+  if (piece.kind === "knight") {
+    return [];
+  }
+  const travel = moveTravel(piece.moveProgress);
+  return path.filter((_, index) => travel >= (index + 0.5) / path.length);
+};
+
 /** Union of squares attacked by pieces currently telegraphing (rendered as red floor tiles). */
 export const threatenedSquares = (world: WorldState): Square[] => {
   const occupancy = buildOccupancy(world.pieces);

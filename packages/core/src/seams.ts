@@ -6,7 +6,7 @@
  * `ManagedRuntime` (see @buckshot/engine `GameRuntime`) and every consumer shares the same instances.
  *
  * Future features plug in here rather than in the simulation:
- *   - upgrades / classes      → a different `Loadout` layer
+ *   - upgrades / classes      → a different `Loadout` layer (weapon, legs, ammo economy)
  *   - variable white armies   → more entries in `SetupRegistry`
  *   - difficulty / run modifiers → `PieceCatalog` + `TimePolicy` layers per run floor
  *   - smarter enemies         → a different `PieceBrain`
@@ -14,6 +14,7 @@
 import { Context, Data, Effect, Layer } from "effect";
 import { decidePieceAction } from "./brain";
 import {
+  DEFAULT_PICKUPS,
   DEFAULT_PIECE_CATALOG,
   DEFAULT_PLAYER,
   DEFAULT_SHOTGUN,
@@ -25,6 +26,7 @@ import { createSimulation, type Simulation } from "./simulation";
 import { type TimeSignals, targetTimeScale } from "./time";
 import type {
   GameConfig,
+  PickupRules,
   PieceAction,
   PieceCatalogData,
   PieceDefinition,
@@ -65,12 +67,17 @@ export class PieceCatalog extends Context.Service<
   });
 }
 
-/** Seam: the player's weapon + body stats (future upgrades/classes swap this). */
+/** Seam: the player's weapon, body and ammo economy (future upgrades/classes swap this). */
 export class Loadout extends Context.Service<
   Loadout,
-  { readonly shotgun: ShotgunStats; readonly player: PlayerStats }
+  {
+    readonly pickups: PickupRules;
+    readonly player: PlayerStats;
+    readonly shotgun: ShotgunStats;
+  }
 >()("@buckshot/core/Loadout") {
   static readonly Default = Layer.succeed(Loadout, {
+    pickups: DEFAULT_PICKUPS,
     player: DEFAULT_PLAYER,
     shotgun: DEFAULT_SHOTGUN,
   });
@@ -157,6 +164,7 @@ export class GameFactory extends Context.Service<
             ? yield* setups.get(options.setupId)
             : SKIRMISH_SETUP;
           const config: GameConfig = {
+            pickups: loadout.pickups,
             pieces: catalog.all,
             player: loadout.player,
             setup,
