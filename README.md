@@ -2,6 +2,8 @@
 
 **You are the king. You have a shotgun. Time only moves when you move.**
 
+**Play it live: https://buckshot-gambit.vercel.app**
+
 A first-person 3D chess shooter for the browser. It mixes three games I love:
 
 - **Shotgun King**: a lone king with a buckshot shotgun against a white army.
@@ -74,27 +76,34 @@ Other scripts:
 - `bun run typecheck`
 - `bun run check`: lint and format check with Ultracite/Biome
 
-## Deploy (Vercel + Turso)
+## Deploy (Vercel CLI + Turso)
 
-SQLite runs through libSQL. The same code that opens a local `file:` database in dev connects to a hosted [Turso](https://turso.tech) database in production, because a plain SQLite file does not survive serverless deploys.
+Live at **https://buckshot-gambit.vercel.app**. SQLite runs through libSQL: the code that opens a local `file:` database in dev connects to a hosted [Turso](https://turso.tech) database in production, because a plain SQLite file does not survive serverless deploys. The database client accepts either `DATABASE_URL`/`DATABASE_AUTH_TOKEN` or the `TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN` pair that Turso's Vercel integration injects.
 
-1. Create a Turso database, then get its URL and a token:
+1. Log in and create the project from the repo root, then point it at the app inside the monorepo:
    ```bash
-   turso db create buckshot-gambit
-   turso db show buckshot-gambit --url
-   turso db tokens create buckshot-gambit
+   bunx vercel login
+   bunx vercel project create buckshot-gambit
+   bunx vercel link --yes --project buckshot-gambit
    ```
-2. Push the schema to it:
+   Then set the project's **Root Directory** to `apps/web` (dashboard, or `vercel api /v9/projects/buckshot-gambit -X PATCH` with `{"rootDirectory":"apps/web","framework":"nextjs"}`).
+2. Provision Turso from the Vercel Marketplace. This connects it to the project and sets `TURSO_*` for every environment:
    ```bash
-   DATABASE_URL=libsql://... DATABASE_AUTH_TOKEN=... bun run db:push
+   bunx vercel integration add tursocloud/database --name buckshot-gambit-db
    ```
-3. Import the repo in Vercel and set **Root Directory** to `apps/web`. Vercel detects Bun and Turborepo from the lockfile.
-4. Set these environment variables:
-   - `DATABASE_URL`
-   - `DATABASE_AUTH_TOKEN`
-   - `BETTER_AUTH_SECRET`: generate with `openssl rand -base64 32`
-   - `BETTER_AUTH_URL`: the deployed origin, e.g. `https://buckshot-gambit.vercel.app`
-5. Deploy.
+3. Push the schema to it. `vercel link` / the integration pulled the variables into the root `.env.local`:
+   ```bash
+   cd packages/db && bun --env-file=../../.env.local run db:push
+   ```
+4. Add an auth secret for production and preview:
+   ```bash
+   openssl rand -base64 32 | bunx vercel env add BETTER_AUTH_SECRET production --sensitive
+   ```
+   The public URL needs no variable. Better Auth falls back to Vercel's `VERCEL_PROJECT_PRODUCTION_URL` and trusts preview URLs automatically; set `BETTER_AUTH_URL` only for a custom domain.
+5. Deploy from the repo root. `.vercelignore` keeps local `.env` files, `*.db` and private notes out of the upload:
+   ```bash
+   bunx vercel deploy --prod
+   ```
 
 ## Submission notes
 
@@ -126,7 +135,7 @@ SQLite runs through libSQL. The same code that opens a local `file:` database in
 - There is no anti-cheat. The client runs the simulation and the server only sanity-checks results. The seeded `Rng` seam would allow a server-side replay of the inputs later.
 - Balance has only been tuned lightly. The knobs are in `packages/core/src/config.ts`.
 - No mobile or touch controls. The game needs a mouse and keyboard with pointer lock.
-- **Deployment:** see [Deploy](#deploy-vercel--turso). It needs a Vercel and Turso account.
+- **Deployment:** live at https://buckshot-gambit.vercel.app. See [Deploy](#deploy-vercel-cli--turso) for how it is set up.
 
 ### How to run
 
