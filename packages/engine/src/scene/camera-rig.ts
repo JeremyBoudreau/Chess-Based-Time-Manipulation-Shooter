@@ -9,6 +9,15 @@ import {
 } from "./coords";
 import { EYE_HEIGHT } from "./palette";
 
+const BASE_FOV = 62;
+/** Degrees the view widens at a full sprint: the speed reads before the legs do. */
+const SPRINT_FOV_KICK = 7;
+/** 1/s: eases the sprint feel in and out in ~0.15 s. */
+const SPRINT_RESPONSE = 16;
+/** Head-bob amplitude gain at a full sprint (longer, heavier strides). */
+const SPRINT_BOB_DEPTH = 0.7;
+/** Step cadence gain at a full sprint (on top of the walking cadence). */
+const SPRINT_BOB_QUICKEN = 0.3;
 const SHAKE_TIME = 0.18;
 const SHAKE_AMPLITUDE = 0.028;
 const DEATH_TIME = 2;
@@ -31,12 +40,12 @@ export interface DeathFocus {
 }
 
 /**
- * The first-person camera: eye height, head bob with speed, a kick of shake per shot, and the two
- * cinematic endings — the SUPERHOT death (roll and sink while staring at the attacker) and a slow
- * push-in toward the fallen white king on victory.
+ * The first-person camera: eye height, head bob with speed, a sprint FOV kick, a kick of shake per
+ * shot, and the two cinematic endings — the SUPERHOT death (roll and sink while staring at the
+ * attacker) and a slow push-in toward the fallen white king on victory.
  */
 export class CameraRig {
-  readonly camera = new PerspectiveCamera(62, 1, 0.03, 120);
+  readonly camera = new PerspectiveCamera(BASE_FOV, 1, 0.03, 120);
   private readonly eye = new Vector3();
   private readonly offset = new Vector3();
   private readonly target = new Vector3();
@@ -52,6 +61,8 @@ export class CameraRig {
   private shakeAge = Number.POSITIVE_INFINITY;
   private bobPhase = 0;
   private speed = 0;
+  /** Smoothed 0..1 sprint envelope (FOV kick, deeper and quicker bob). */
+  private sprint = 0;
   private endAge = 0;
   private ending: "none" | "lost" | "won" = "none";
 
@@ -69,6 +80,8 @@ export class CameraRig {
     this.shakeAge = Number.POSITIVE_INFINITY;
     this.bobPhase = 0;
     this.speed = 0;
+    this.sprint = 0;
+    this.applyFov();
     this.endAge = 0;
     this.ending = "none";
     this.hasFallDir = false;
@@ -92,6 +105,10 @@ export class CameraRig {
     walking: boolean
   ): void {
     this.shakeAge += realDt;
+    // `sprinting` is as stale as `velocity` on frames without a step; it also eases out on death.
+    const sprinting = walking && world.player.sprinting;
+    this.sprint = damp(this.sprint, sprinting ? 1 : 0, SPRINT_RESPONSE, realDt);
+    this.applyFov();
     if (world.status === "playing") {
       this.ending = "none";
       this.placeFirstPerson(world, realDt, clock, walking);
@@ -127,8 +144,12 @@ export class CameraRig {
       velocity / Math.max(1e-3, world.config.player.moveSpeed)
     );
     this.speed = damp(this.speed, speed, 8, realDt);
-    this.bobPhase += realDt * velocity * 4.4;
-    const s = this.speed;
+    // Cadence follows walking speed only; a sprint quickens it by a fixed factor instead of the
+    // full 1.6× leg speed, which would turn the bob into a jitter.
+    const cadence = Math.min(velocity, world.config.player.moveSpeed);
+    this.bobPhase +=
+      realDt * cadence * 4.4 * (1 + SPRINT_BOB_QUICKEN * this.sprint);
+    const s = this.speed * (1 + SPRINT_BOB_DEPTH * this.sprint);
     const bobY = 0.032 * s * Math.sin(this.bobPhase * 2);
     const bobSide = 0.018 * s * Math.sin(this.bobPhase);
 
@@ -153,6 +174,14 @@ export class CameraRig {
       player.yaw,
       0.006 * s * Math.sin(this.bobPhase)
     );
+  }
+
+  private applyFov(): void {
+    const fov = BASE_FOV + SPRINT_FOV_KICK * this.sprint;
+    if (Math.abs(fov - this.camera.fov) > 1e-3) {
+      this.camera.fov = fov;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   /** SUPERHOT death: topple back and sink to the board, rolling, eyes locked on the attacker. */

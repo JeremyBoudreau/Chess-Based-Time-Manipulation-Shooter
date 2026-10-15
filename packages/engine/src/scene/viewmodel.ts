@@ -27,6 +27,19 @@ import { PALETTE } from "./palette";
 const REST = new Vector3(0.235, -0.27, -0.6);
 const REST_YAW = 0.12;
 const REST_PITCH = 0.06;
+/**
+ * Sprint carry: the gun drops a little, pulls in, its muzzle dips and it cants toward the centre,
+ * so a sprint reads at a glance even without looking at the HUD.
+ */
+const SPRINT_DIP = 0.035;
+const SPRINT_PULL = 0.015;
+const SPRINT_PITCH = -0.16;
+const SPRINT_YAW = 0.1;
+const SPRINT_ROLL = 0.14;
+/** 1/s: eases the sprint pose in and out in ~0.15 s (matches the camera rig). */
+const SPRINT_RESPONSE = 16;
+const SPRINT_BOB_DEPTH = 0.9;
+const SPRINT_BOB_QUICKEN = 0.3;
 /** Recoil pivots near the grip so the muzzle climbs. */
 const RECOIL_PIVOT = new Vector3(0, -0.07, 0.1);
 const RECOIL_PITCH = (12 * Math.PI) / 180;
@@ -91,8 +104,8 @@ const createFlashTexture = (): CanvasTexture => {
 
 /**
  * The first-person sawed-off, drawn in its own scene/camera pass after a depth clear so it can never
- * clip into pieces. Pure presentation: it reads player state (velocity, reload timer) and reacts to
- * shot/dry-fire/reload events with recoil, a break-action reload and a muzzle flash.
+ * clip into pieces. Pure presentation: it reads player state (velocity, sprint, reload timer) and
+ * reacts to shot/dry-fire/reload events with recoil, a break-action reload and a muzzle flash.
  */
 export class Viewmodel {
   readonly scene = new Scene();
@@ -112,6 +125,8 @@ export class Viewmodel {
   private dropAge = 0;
   private bobPhase = 0;
   private speed = 0;
+  /** Smoothed 0..1 sprint envelope. */
+  private sprint = 0;
   private swayX = 0;
   private swayY = 0;
   private lastYaw = 0;
@@ -188,6 +203,7 @@ export class Viewmodel {
     this.closeAge = Number.POSITIVE_INFINITY;
     this.flashAge = Number.POSITIVE_INFINITY;
     this.dropAge = 0;
+    this.sprint = 0;
     this.swayX = 0;
     this.swayY = 0;
     this.lastYaw = world.player.yaw;
@@ -263,7 +279,12 @@ export class Viewmodel {
       velocity / Math.max(1e-3, world.config.player.moveSpeed)
     );
     this.speed = damp(this.speed, speed, 10, realDt);
-    this.bobPhase += realDt * velocity * 4.4;
+    const sprinting = walking && player.sprinting;
+    this.sprint = damp(this.sprint, sprinting ? 1 : 0, SPRINT_RESPONSE, realDt);
+    const { sprint } = this;
+    // Same cadence rule as the camera rig, so gun and head stay in step.
+    const cadence = Math.min(velocity, world.config.player.moveSpeed);
+    this.bobPhase += realDt * cadence * 4.4 * (1 + SPRINT_BOB_QUICKEN * sprint);
 
     const dt = Math.max(realDt, 1e-3);
     const yawRate = wrapAngle(player.yaw - this.lastYaw) / dt;
@@ -275,19 +296,19 @@ export class Viewmodel {
     this.swayX = damp(this.swayX, clampSway(yawRate * 0.006), 12, realDt);
     this.swayY = damp(this.swayY, clampSway(-pitchRate * 0.006), 12, realDt);
 
-    const s = this.speed;
+    const s = this.speed * (1 + SPRINT_BOB_DEPTH * sprint);
     const bobX = 0.011 * s * Math.sin(this.bobPhase);
     const bobY = -0.009 * s * Math.abs(Math.cos(this.bobPhase));
     const breathe = 0.0025 * Math.sin(clock * 1.7);
     this.rig.position.set(
       REST.x + bobX + this.swayX,
-      REST.y + bobY + breathe + this.swayY,
-      REST.z + 0.012 * s
+      REST.y + bobY + breathe + this.swayY - SPRINT_DIP * sprint,
+      REST.z + 0.012 * this.speed + SPRINT_PULL * sprint
     );
     this.rig.rotation.set(
-      REST_PITCH + this.swayY * 1.2,
-      REST_YAW,
-      this.swayX * 2.4 + 0.004 * Math.sin(clock * 1.1)
+      REST_PITCH + this.swayY * 1.2 + SPRINT_PITCH * sprint,
+      REST_YAW + SPRINT_YAW * sprint,
+      this.swayX * 2.4 + 0.004 * Math.sin(clock * 1.1) + SPRINT_ROLL * sprint
     );
   }
 

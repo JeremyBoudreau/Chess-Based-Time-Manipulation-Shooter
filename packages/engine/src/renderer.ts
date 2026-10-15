@@ -1,4 +1,9 @@
-import type { GameEvent, PieceState, WorldState } from "@buckshot/core";
+import {
+  type GameEvent,
+  maxTimeScale,
+  type PieceState,
+  type WorldState,
+} from "@buckshot/core";
 import {
   ACESFilmicToneMapping,
   MathUtils,
@@ -18,6 +23,7 @@ import { Environment } from "./scene/environment";
 import { MoveTargetLayer } from "./scene/move-targets";
 import { PALETTE } from "./scene/palette";
 import { type MuzzleRay, PelletLayer } from "./scene/pellets";
+import { PickupLayer } from "./scene/pickups";
 import { PieceLayer } from "./scene/piece-layer";
 import { ShatterLayer } from "./scene/shatter";
 import { ThreatLayer } from "./scene/threats";
@@ -54,6 +60,7 @@ export class GameRenderer {
   private readonly board = new Board();
   private readonly pieces = new PieceLayer();
   private readonly pellets = new PelletLayer();
+  private readonly pickups = new PickupLayer();
   private readonly shatter = new ShatterLayer();
   private readonly threats = new ThreatLayer();
   private readonly moveTargets = new MoveTargetLayer();
@@ -97,6 +104,7 @@ export class GameRenderer {
       this.threats.group,
       this.aimFan.group,
       this.pieces.group,
+      this.pickups.group,
       this.pellets.group,
       this.shatter.group,
       this.muzzleLight,
@@ -111,6 +119,7 @@ export class GameRenderer {
   reset(world: WorldState): void {
     this.pieces.clear();
     this.pellets.clear();
+    this.pickups.clear();
     this.shatter.clear();
     this.attackerId = null;
     this.kingFell = false;
@@ -123,8 +132,10 @@ export class GameRenderer {
   /** Render one frame. Call right after `simulation.step`; consumes `world.events`. */
   render(world: WorldState, realDt: number): void {
     const dt = Math.min(MAX_DT, Math.max(0, realDt));
+    // Sprinting and reloading run game time faster than real time (up to `maxTimeScale`), so the
+    // guard against game-time jumps (a restart, a stalled tab) must allow that much or debris lags.
     const gameDt = Math.min(
-      dt,
+      dt * maxTimeScale(world.config.time),
       Math.max(0, world.gameTime - this.lastGameTime)
     );
     this.lastGameTime = world.gameTime;
@@ -163,6 +174,19 @@ export class GameRenderer {
     this.threats.update(world, this.clock);
     this.aimFan.update(world);
     this.cameraRig.update(world, dt, this.clock, this.focus(world), walking);
+    // After the camera: collected shells pop toward where the eye is this frame.
+    this.pickups.sync(
+      world,
+      {
+        clock: this.clock,
+        effectDt,
+        eye: this.cameraRig.camera.position,
+        eyeYaw: world.player.yaw,
+        live: frame.live,
+        realDt: dt,
+      },
+      this.pieces
+    );
     this.viewmodel.update(world, dt, effectDt, this.clock, walking);
     this.updateMuzzleLight();
 
@@ -184,6 +208,7 @@ export class GameRenderer {
   dispose(): void {
     this.pieces.dispose();
     this.pellets.dispose();
+    this.pickups.dispose();
     this.shatter.dispose();
     this.threats.dispose();
     this.moveTargets.dispose();
@@ -215,6 +240,12 @@ export class GameRenderer {
       case "kingCaptured":
         this.attackerId = event.pieceId;
         break;
+      case "pickupCollected":
+        this.pickups.onCollected(event.pickupId);
+        break;
+      case "pickupCrushed":
+        this.pickups.onCrushed(event.pickupId, event.pieceId);
+        break;
       default:
         break;
     }
@@ -245,7 +276,8 @@ export class GameRenderer {
    * muzzle flash (first shot), the shells (first reload) and the per-instance-colour sparks (first
    * kill), each a visible hitch. `compile` walks hidden objects too, so the viewmodel's hidden flash
    * and shells are covered as they sit; the sparks get a throwaway mesh compiled against the main
-   * scene's lights and fog, since those are part of the program key.
+   * scene's lights and fog, since those are part of the program key. The pickup layer keeps a
+   * hidden shell box and its (empty) fragment mesh in the scene, so pickups are covered the same way.
    */
   private warmUpShaders(): void {
     this.renderer.compile(this.scene, this.cameraRig.camera);

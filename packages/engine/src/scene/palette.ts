@@ -12,6 +12,8 @@ export const PALETTE = {
   metal: "#0A0C0E",
   metalSpecular: "#46AEBB",
   muzzle: "#E8FBFF",
+  /** Pale gold of the ring under a shell pickup: findable on both tiles, never mistaken for a threat. */
+  pickupGlow: "#FFE7A3",
   red: "#E80C0C",
   redDark: "#981A1B",
   seam: "#2A1B19",
