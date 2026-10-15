@@ -19,7 +19,6 @@ const OPEN_CUTOFF_HZ = 18_000;
 const CUTOFF_EPSILON = 0.01;
 const FILTER_TIME_CONSTANT = 0.04;
 const MASTER_VOLUME = 0.75;
-const MUTE_TIME_CONSTANT = 0.05;
 const AMBIENT_FROZEN_GAIN = 0.018;
 const AMBIENT_FLOWING_GAIN = 0.07;
 const AMBIENT_TIME_CONSTANT = 0.12;
@@ -111,7 +110,6 @@ const random = (min: number, max: number): number =>
  */
 export class GameAudio {
   private graph: AudioGraph | null = null;
-  private muted: boolean;
   private paused: boolean;
   private playing: boolean;
   private lastCutoff = OPEN_CUTOFF_HZ;
@@ -125,16 +123,11 @@ export class GameAudio {
   private readonly pendingCrushes: PendingCrush[] = [];
 
   constructor() {
-    this.muted = false;
     this.paused = true;
     this.playing = true;
     this.disposed = false;
     window.addEventListener("pointerdown", this.unlock, true);
     window.addEventListener("keydown", this.unlock, true);
-  }
-
-  get isMuted(): boolean {
-    return this.muted;
   }
 
   /** Create (or resume) the AudioContext. Safe to call repeatedly; must run inside a user gesture. */
@@ -144,7 +137,6 @@ export class GameAudio {
     }
     if (!this.graph) {
       this.graph = createGraph();
-      this.applyMute(0);
     }
     if (this.graph.ctx.state === "suspended") {
       this.graph.ctx.resume().catch(() => {
@@ -152,17 +144,6 @@ export class GameAudio {
       });
     }
   };
-
-  setMuted(muted: boolean): void {
-    this.muted = muted;
-    this.applyMute(MUTE_TIME_CONSTANT);
-  }
-
-  /** Flip mute and return the new state. */
-  toggleMute(): boolean {
-    this.setMuted(!this.muted);
-    return this.muted;
-  }
 
   /** While paused the ambient bed fades out so the pause screen is quiet. */
   setPaused(paused: boolean): void {
@@ -209,20 +190,6 @@ export class GameAudio {
         // Already closed.
       });
     }
-  }
-
-  private applyMute(timeConstant: number): void {
-    const { graph } = this;
-    if (!graph) {
-      return;
-    }
-    const target = this.muted ? 0 : MASTER_VOLUME;
-    const now = graph.ctx.currentTime;
-    if (timeConstant <= 0) {
-      graph.master.gain.setValueAtTime(target, now);
-      return;
-    }
-    graph.master.gain.setTargetAtTime(target, now, timeConstant);
   }
 
   /**
@@ -941,7 +908,7 @@ const createNoiseBuffer = (ctx: AudioContext): AudioBuffer => {
 
 /**
  * direct ─────────────────────────────┐
- * world ──┐                           ├─ master (mute) ─ compressor ─ speakers
+ * world ──┐                           ├─ master ───────── compressor ─ speakers
  * ambient ┼─ timeFilter (follows time)┘
  * rush ───┘  (sprint overdrive only)
  */
@@ -958,7 +925,7 @@ const createGraph = (): AudioGraph => {
   compressor.connect(ctx.destination);
 
   const master = ctx.createGain();
-  master.gain.value = 0;
+  master.gain.value = MASTER_VOLUME;
   master.connect(compressor);
 
   const direct = ctx.createGain();

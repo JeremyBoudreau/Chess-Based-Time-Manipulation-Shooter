@@ -26,7 +26,6 @@ export interface HudSnapshot {
   /** Set once per game over; the same object passed to `onGameOver`. */
   readonly lastResult: RunResult | null;
   readonly loaded: number;
-  readonly muted: boolean;
   /** Pointer not locked while the game is still being played. */
   readonly paused: boolean;
   /** Shell boxes lying on the board (the only way to refill the reserve). */
@@ -56,7 +55,6 @@ export const INITIAL_HUD_SNAPSHOT: HudSnapshot = {
   kills: 0,
   lastResult: null,
   loaded: 2,
-  muted: false,
   paused: true,
   pickupsOnBoard: 0,
   piecesLeft: 0,
@@ -73,7 +71,6 @@ export const INITIAL_HUD_SNAPSHOT: HudSnapshot = {
 
 /** Client-side state that is not part of the world. */
 export interface HudExtras {
-  readonly muted: boolean;
   readonly paused: boolean;
 }
 
@@ -163,7 +160,6 @@ const computeSnapshot = (
     kills: totalKills(world),
     lastResult,
     loaded: player.loaded,
-    muted: extras.muted,
     paused: extras.paused,
     pickupsOnBoard: world.pickups.length,
     piecesLeft: world.pieces.filter((piece) => piece.phase !== "dead").length,

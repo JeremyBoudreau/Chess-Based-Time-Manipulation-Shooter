@@ -3,7 +3,6 @@ const range = (count: number): number[] =>
 
 export interface StatusReadoutProps {
   readonly gameTime: number;
-  readonly muted: boolean;
   /** Shift held while moving (time is outrunning real time). */
   readonly sprinting: boolean;
   readonly timeScale: number;
@@ -25,7 +24,6 @@ const timeClassName = (timeScale: number): string | undefined => {
  */
 export function StatusReadout({
   gameTime,
-  muted,
   sprinting,
   timeScale,
   whiteKingHp,
@@ -33,7 +31,6 @@ export function StatusReadout({
 }: StatusReadoutProps) {
   return (
     <div className="pointer-events-none absolute right-6 bottom-6 flex select-none flex-col items-end gap-1.5 font-mono text-[11px] text-[rgba(10,12,14,0.72)] uppercase tracking-[0.25em]">
-      {muted ? <span className="text-[rgba(10,12,14,0.5)]">Muted</span> : null}
       {whiteKingHp !== null && whiteKingMaxHp !== null ? (
         <div className="flex items-center gap-2">
           <span className="text-base leading-none tracking-normal">♔</span>

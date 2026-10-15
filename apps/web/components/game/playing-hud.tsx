@@ -35,7 +35,6 @@ export function PlayingHud({
       />
       <StatusReadout
         gameTime={hud.gameTime}
-        muted={hud.muted}
         sprinting={hud.sprinting}
         timeScale={hud.timeScale}
         whiteKingHp={hud.whiteKingHp}

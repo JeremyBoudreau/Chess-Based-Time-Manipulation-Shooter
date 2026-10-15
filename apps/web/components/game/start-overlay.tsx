@@ -7,7 +7,6 @@ const CONTROLS = [
   { action: "aim", keys: "Mouse" },
   { action: "fire", keys: "Click" },
   { action: "reload", keys: "R" },
-  { action: "mute", keys: "M" },
   { action: "pause", keys: "Esc" },
 ] as const;
 

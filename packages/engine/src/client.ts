@@ -97,10 +97,6 @@ export class GameClient {
     return this.simulation.world;
   }
 
-  get isMuted(): boolean {
-    return this.audio.isMuted;
-  }
-
   /**
    * Begin/resume play. Call from a click handler: pointer lock and the AudioContext both need the
    * user gesture.
@@ -131,10 +127,6 @@ export class GameClient {
     this.renderer.reset(this.simulation.world);
     this.lastFrame = performance.now();
     this.startLoop();
-  }
-
-  toggleMute(): boolean {
-    return this.audio.toggleMute();
   }
 
   /** Look sensitivity in rad/px. */
@@ -200,7 +192,7 @@ export class GameClient {
     this.renderer.render(world, dt);
     this.audio.setPaused(paused);
     this.audio.update(world);
-    this.hud.update(world, { muted: this.audio.isMuted, paused });
+    this.hud.update(world, { paused });
     // Events belong to one step. Clearing them after they are consumed means a paused frame (no
     // step) can never replay the previous step's shots, hits and kills in the renderer or audio.
     world.events.length = 0;
@@ -235,14 +227,6 @@ export class GameClient {
   }
 
   private readonly handleKey = (code: string): void => {
-    if (code === "KeyM") {
-      this.audio.toggleMute();
-      this.hud.update(this.simulation.world, {
-        muted: this.audio.isMuted,
-        paused: this.isPaused(),
-      });
-      return;
-    }
     if (
       code === "KeyR" &&
       this.simulation.world.status !== "playing" &&
@@ -271,8 +255,4 @@ export class GameClient {
     const pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
     this.renderer.resize(clientWidth, clientHeight, pixelRatio);
   };
-
-  private isPaused(): boolean {
-    return this.simulation.world.status === "playing" && !this.input.isLocked;
-  }
 }

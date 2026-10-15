@@ -130,7 +130,7 @@ export class InputController {
 
   /**
    * Subscribe to non-repeating key presses (`KeyboardEvent.code`), locked or not. Used for
-   * meta keys the simulation does not know about: mute, instant restart.
+   * meta keys the simulation does not know about (instant restart).
    */
   onKey(listener: KeyListener): () => void {
     this.keyListeners.add(listener);
