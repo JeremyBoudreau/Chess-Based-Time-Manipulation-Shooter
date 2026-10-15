@@ -1,0 +1,4 @@
+{
+  "extends": "@buckshot/tsconfig/library.json",
+  "include": ["src"]
+}

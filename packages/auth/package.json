@@ -1,0 +1,23 @@
+{
+  "name": "@buckshot/auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@buckshot/db": "workspace:*",
+    "better-auth": "1.7.10",
+    "effect": "4.0.5"
+  },
+  "devDependencies": {
+    "@buckshot/tsconfig": "workspace:*",
+    "@types/bun": "latest",
+    "typescript": "6.0.3"
+  }
+}

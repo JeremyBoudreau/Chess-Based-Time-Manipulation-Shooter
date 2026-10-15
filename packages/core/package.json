@@ -1,0 +1,22 @@
+{
+  "name": "@buckshot/core",
+  "version": "0.0.0",
+  "private": true,
+  "sideEffects": false,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "4.0.5"
+  },
+  "devDependencies": {
+    "@buckshot/tsconfig": "workspace:*",
+    "@types/bun": "latest",
+    "typescript": "6.0.3"
+  }
+}
